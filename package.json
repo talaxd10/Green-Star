@@ -1,0 +1,16 @@
+{
+  "name": "green-star",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @green-star/db migrate",
+    "db:reset": "pnpm --filter @green-star/db reset"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  }
+}

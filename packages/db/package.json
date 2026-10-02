@@ -1,0 +1,16 @@
+{
+  "name": "@green-star/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "migrate": "node scripts/migrate.ts",
+    "reset": "node scripts/reset.ts",
+    "test": "node scripts/reset.ts && node --test --test-concurrency=1 test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@green-star/domain": "workspace:*"
+  }
+}
