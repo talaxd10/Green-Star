@@ -4,6 +4,7 @@ import {
   assertBalanced,
   cashOut,
   currencyExchange,
+  currencyExchangeToDinars,
   driverCollected,
   fileConfirmed,
   iqd,
@@ -127,4 +128,16 @@ test("every builder balances for random amounts in both currencies", () => {
     ];
     for (const d of drafts) assertBalanced(d.lines);
   }
+});
+
+test("an exchange works both ways and each way balances", () => {
+  const toDollars = currencyExchange({ iqdGiven: 1470000n, usdCentsReceived: 100000n });
+  const toDinars = currencyExchangeToDinars({ usdCentsGiven: 100000n, iqdReceived: 1465000n });
+  assert.equal(toDollars.ratePer100, 147000);
+  assert.equal(toDinars.ratePer100, 146500);
+  const vault = (draft: typeof toDollars, currency: "USD" | "IQD") =>
+    draft.lines.find((l) => l.account.type === "system" && l.account.code === `vault_${currency.toLowerCase()}`)!.amount;
+  assert.deepEqual([vault(toDollars, "USD"), vault(toDollars, "IQD")], [100000n, -1470000n]);
+  assert.deepEqual([vault(toDinars, "USD"), vault(toDinars, "IQD")], [-100000n, 1465000n]);
+  assert.throws(() => currencyExchangeToDinars({ usdCentsGiven: 0n, iqdReceived: 1n }), /more than zero/);
 });

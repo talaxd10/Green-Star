@@ -190,12 +190,19 @@ test("a confirmed file is locked", () => {
     /shipment_locked/,
   );
   refused(() => app(`update consignments set charge_entry_id = null where id = ${lit(consignmentId)};`), /permission denied/);
-  refused(() => app(`update consignments set status = 'cancelled' where id = ${lit(consignmentId)};`), /cancel_needs_reversal/);
-  refused(() => app(`update shipments set status = 'draft' where id = ${lit(shipmentId)};`), /shipments_confirmed_fields/);
+  // Status is worked out from the facts. Nobody types it in, not even the owner role by mistake.
+  refused(() => app(`update consignments set status = 'cancelled' where id = ${lit(consignmentId)};`), /permission denied/);
+  refused(() => app(`update consignments set status = 'closed' where id = ${lit(consignmentId)};`), /permission denied/);
+  refused(() => app(`update shipments set status = 'closed' where id = ${lit(shipmentId)};`), /permission denied/);
+  refused(
+    () => app(`insert into consignments (shipment_id, customer_id, amount_due_usd_cents, status) values (${lit(randomUUID())}, ${lit(other)}, 100, 'closed');`),
+    /permission denied/,
+  );
+  refused(() => owner(`update consignments set status = 'cancelled' where id = ${lit(consignmentId)};`), /cancel_needs_reversal/);
+  refused(() => owner(`update shipments set status = 'draft' where id = ${lit(shipmentId)};`), /shipments_confirmed_fields/);
 
-  // The delivery side of a consignment can still move.
-  app(`update consignments set status = 'on_round', cartons_received = 3 where id = ${lit(consignmentId)};`);
-  app(`update shipments set status = 'on_rounds' where id = ${lit(shipmentId)};`);
+  // The carton count from the airport can still be entered.
+  app(`update consignments set cartons_received = 3 where id = ${lit(consignmentId)};`);
 });
 
 test("a draft file can still be edited", () => {
@@ -300,7 +307,7 @@ test("cancelling a consignment reverses its charge and frees the money paid on i
   // The $40.00 that had paid the cancelled consignment now pays the other one.
   assert.equal(money(second.consignmentId), "7000,5000,2000");
   assert.equal(customerBalance(customer), 2000n);
-  refused(() => app(`update consignments set status = 'listed' where id = ${lit(first.consignmentId)};`), /consignment_locked/);
+  refused(() => owner(`update consignments set status = 'listed' where id = ${lit(first.consignmentId)};`), /consignment_locked/);
   assert.equal(health(), "");
 });
 

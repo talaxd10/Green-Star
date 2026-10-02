@@ -251,6 +251,25 @@ export function cashOut(input: { category: ExpenseCategory; amount: Money; reaso
 }
 
 /**
+ * Dollars from the vault changed into dinars: the same exchange the other way
+ * round. Both amounts are what really changed hands.
+ */
+export function currencyExchangeToDinars(input: { usdCentsGiven: bigint; iqdReceived: bigint }): EntryDraft {
+  positive(input.usdCentsGiven, "the dollars given");
+  positive(input.iqdReceived, "the dinars received");
+  return draft(
+    "currency_exchange",
+    [
+      { account: account.vault("IQD"), currency: "IQD", amount: input.iqdReceived },
+      { account: account.exchangeClearing("IQD"), currency: "IQD", amount: -input.iqdReceived },
+      { account: account.exchangeClearing("USD"), currency: "USD", amount: input.usdCentsGiven },
+      { account: account.vault("USD"), currency: "USD", amount: -input.usdCentsGiven },
+    ],
+    { ratePer100: impliedRate(input.iqdReceived, input.usdCentsGiven) },
+  );
+}
+
+/**
  * Dinars from the vault changed into dollars. Both amounts are what really
  * changed hands; the rate recorded is the one they imply.
  */

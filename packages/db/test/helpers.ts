@@ -25,11 +25,9 @@ export function refused(run: () => unknown, pattern: RegExp): void {
   });
 }
 
+/** Sets a day's rate. Tests use rates far apart, so the jump is confirmed up front. */
 export function setRate(day: string, ratePer100: number): void {
-  app(
-    `insert into fx_rates (day, iqd_per_100_usd, set_by) values (${lit(day)}, ${ratePer100}, ${lit(USER)})
-     on conflict (day) do update set iqd_per_100_usd = excluded.iqd_per_100_usd;`,
-  );
+  app(`select gs_set_rate(${lit(day)}, ${ratePer100}, ${lit(USER)}, true);`);
 }
 
 export function newCustomer(name = "Test customer"): string {
@@ -96,3 +94,78 @@ export const customerBalance = (customerId: string) =>
   BigInt(app(`select coalesce((select balance_usd_cents from customer_balances where customer_id = ${lit(customerId)}), 0);`));
 
 export const health = () => app("select problem || ': ' || detail from gs_ledger_health();");
+
+// ---------------------------------------------------------------------------
+// Rounds
+// ---------------------------------------------------------------------------
+
+export function newDriver(name = "Karwan"): string {
+  const id = randomUUID();
+  app(`insert into drivers (id, name) values (${lit(id)}, ${lit(name)});`);
+  return id;
+}
+
+/** A planned round for a driver, with these consignments on it. */
+export function newRound(consignmentIds: readonly string[] = [], driverId: string = newDriver()): string {
+  const id = randomUUID();
+  app(
+    [
+      `insert into rounds (id, driver_id, created_by) values (${lit(id)}, ${lit(driverId)}, ${lit(USER)});`,
+      ...consignmentIds.map((c) => `select gs_add_round_stop(${lit(id)}, ${lit(c)}, ${lit(USER)});`),
+    ].join("\n"),
+  );
+  return id;
+}
+
+/** A round that has left with these consignments. */
+export function roundOut(consignmentIds: readonly string[], at = new Date("2026-10-02T06:00:00Z")): string {
+  const id = newRound(consignmentIds);
+  app(`select gs_round_depart(${lit(id)}, ${lit(USER)}, ${lit(at.toISOString())});`);
+  return id;
+}
+
+export type Outcome = "paid" | "on_account" | "prepaid" | "held" | "unpaid";
+export type Method = "driver_cash" | "fib" | "fastpay" | "zaincash" | "office_cash";
+
+export interface ResultInput {
+  roundId: string;
+  consignmentId: string;
+  outcome: Outcome;
+  received?: { amount: bigint | number; currency: "USD" | "IQD"; method?: Method };
+  at?: Date;
+  id?: string;
+}
+
+export function resultSql(input: ResultInput): string {
+  const at = input.at ?? new Date("2026-10-02T12:00:00Z");
+  const money = input.received
+    ? `${input.received.amount}, ${lit(input.received.currency)}, ${lit(input.received.method ?? "driver_cash")}`
+    : "null, null, null";
+  return `select gs_enter_round_result(${lit(input.id ?? randomUUID())}, ${lit(input.roundId)}, ${lit(input.consignmentId)}, ${lit(input.outcome)}, ${lit(USER)}, ${lit(at.toISOString())}, ${money});`;
+}
+
+/** Enters what happened at one stop. Returns the result's id. */
+export const enterResult = (input: ResultInput) => app(resultSql(input));
+
+export type Notes = Record<number, number>;
+
+export function handInSql(
+  roundId: string,
+  counted: { usd?: Notes; iqd?: Notes; note?: string; at?: Date; id?: string } = {},
+): string {
+  const at = counted.at ?? new Date("2026-10-02T15:00:00Z");
+  const json = (notes: Notes | undefined) => (notes ? `${lit(JSON.stringify(notes))}::jsonb` : "null");
+  return `select gs_hand_in_round(${lit(counted.id ?? randomUUID())}, ${lit(roundId)}, ${lit(USER)}, ${lit(at.toISOString())}, ${json(counted.usd)}, ${json(counted.iqd)}, ${counted.note === undefined ? "null" : lit(counted.note)});`;
+}
+
+/** Counts a round's cash in, note by note. Returns the hand-in's id. */
+export const handIn = (roundId: string, counted: Parameters<typeof handInSql>[1] = {}) => app(handInSql(roundId, counted));
+
+export const consignmentStatus = (consignmentId: string) =>
+  app(`select status from consignments where id = ${lit(consignmentId)};`);
+
+export const shipmentStatus = (shipmentId: string) => app(`select status from shipments where id = ${lit(shipmentId)};`);
+
+export function makeTrusted(customerId: string, limitUsdCents: bigint | null = null): void {
+  app(`select gs_set_customer_trust(${lit(customerId)}, 'trusted', ${limitUsdCents === null ? "null" : limitUsdCents}, ${lit(USER)}, 'China office');`);
+}

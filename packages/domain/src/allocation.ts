@@ -21,13 +21,25 @@ export interface AllocationResult {
   unappliedUsdCents: bigint;
 }
 
-export function allocateOldestFirst(paymentUsdCents: bigint, open: readonly OpenConsignment[]): AllocationResult {
+/**
+ * Applies a payment to the oldest unpaid consignments first. A payment made
+ * for one consignment (money the driver took at that customer's door) pays
+ * that consignment first; what is left goes to the oldest.
+ */
+export function allocateOldestFirst(
+  paymentUsdCents: bigint,
+  open: readonly OpenConsignment[],
+  paidForConsignmentId?: string,
+): AllocationResult {
   if (paymentUsdCents < 0n) {
     throw new RangeError("a payment cannot be negative");
   }
+  const first = (c: OpenConsignment) => (c.id === paidForConsignmentId ? 0 : 1);
   const ordered = [...open]
     .filter((c) => c.remainingUsdCents > 0n)
-    .sort((a, b) => a.confirmedAt.getTime() - b.confirmedAt.getTime() || a.id.localeCompare(b.id));
+    .sort(
+      (a, b) => first(a) - first(b) || a.confirmedAt.getTime() - b.confirmedAt.getTime() || a.id.localeCompare(b.id),
+    );
 
   const allocations: Allocation[] = [];
   let left = paymentUsdCents;

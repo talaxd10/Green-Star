@@ -54,3 +54,14 @@ export function impliedRate(dinars: bigint, cents: bigint): number {
   }
   return Number((dinars * 20000n + cents) / (2n * cents));
 }
+
+/**
+ * True when a new rate is more than 20% away from the last one. That is almost
+ * always a typing mistake (1,450 instead of 145,000), so the screen asks again
+ * before sending it. The database applies the same test in gs_set_rate.
+ */
+export function isRateJump(lastRatePer100: number, newRatePer100: number): boolean {
+  assertRate(lastRatePer100);
+  assertRate(newRatePer100);
+  return Math.abs(newRatePer100 - lastRatePer100) * 5 > lastRatePer100;
+}

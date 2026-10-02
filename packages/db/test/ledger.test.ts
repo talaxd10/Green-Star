@@ -7,11 +7,9 @@ import { randomUUID } from "node:crypto";
 import {
   cashOut,
   currencyExchange,
-  driverCollected,
   fileConfirmed,
   iqd,
   officePayment,
-  roundHandedIn,
   sentToChina,
   usd,
   walletPayment,
@@ -230,50 +228,6 @@ test("accounts keep their identity", () => {
   );
 });
 
-test("the board's round 14 comes out exactly", () => {
-  // Rate today: 1,450 IQD per $1. Four customers on one round.
-  setRate("2026-10-02", 145000);
-  const day = new Date("2026-10-02T12:00:00Z");
-  const round = randomUUID();
-  const rebwar = newCustomer("Rebwar A.");
-  const shvan = newCustomer("Shvan K.");
-  const dara = newCustomer("Dara M.");
-  const hemn = newCustomer("Hemn S.");
-  const before = balances();
-
-  // One file with all four customers, confirmed in one go.
-  const file = randomUUID();
-  app(`${draftShipmentSql(file, [[rebwar, 8500n], [shvan, 4000n], [dara, 31000n], [hemn, 6200n]])}\n${confirmSql(file, day)}`);
-  // Rebwar paid 123,250 IQD. Shvan's goods are held. Dara is on account. Hemn was delivered, not paid.
-  post(driverCollected({ roundId: round, customerId: rebwar, received: iqd(123250), ratePer100: 145000 }), day);
-  // The driver hands in 123,250 IQD and no dollars.
-  post(roundHandedIn({ roundId: round, countedUsdCents: 0n, countedIqd: 123250n }), day);
-
-  const after = balances();
-  const delta = (key: string) => (after.get(key) ?? 0n) - (before.get(key) ?? 0n);
-
-  assert.equal(after.get(`customer:${rebwar}`), 0n);
-  assert.equal(after.get(`customer:${shvan}`), 4000n);
-  assert.equal(after.get(`customer:${dara}`), 31000n);
-  assert.equal(after.get(`customer:${hemn}`), 6200n);
-  assert.equal(after.get(`driver:${round}:IQD`), 0n);
-  assert.equal(delta("vault_iqd"), 123250n);
-  assert.equal(delta("vault_usd"), 0n);
-  assert.equal(delta("china_payable"), -49700n);
-  assert.equal(delta("exchange_clearing_iqd"), -123250n);
-  assert.equal(delta("exchange_clearing_usd"), 8500n);
-  assert.equal(health(), "");
-});
-
-test("a short hand-in leaves the gap on the round", () => {
-  const round = randomUUID();
-  const customerId = newCustomer();
-  charge(customerId, 10000n);
-  post(driverCollected({ roundId: round, customerId, received: usd(10000) }));
-  post(roundHandedIn({ roundId: round, countedUsdCents: 9500n, countedIqd: 0n }));
-  assert.equal(balances().get(`driver:${round}:USD`), 500n);
-});
-
 test("random payments in both currencies always balance", () => {
   let seed = 20261002;
   const next = (n: number) => {
@@ -290,7 +244,6 @@ test("random payments in both currencies always balance", () => {
   for (const d of days) setRate(d.day, d.rate);
 
   const customers = Array.from({ length: 8 }, () => newCustomer());
-  const rounds = Array.from({ length: 3 }, () => randomUUID());
   const start = balances();
   const model = new Map<string, bigint>();
   const apply = (draft: EntryDraft, sign: bigint) => {
@@ -313,13 +266,13 @@ test("random payments in both currencies always balance", () => {
       const dinars = BigInt((next(4000) + 1) * 250);
       const cents = BigInt(next(500000) + 1);
       const customerId = pick(customers);
-      const roundId = pick(rounds);
       const inDinars = next(2) === 0;
       const received = inDinars ? iqd(dinars) : usd(cents);
       const rate = inDinars ? { ratePer100: d.rate } : {};
       let draft: EntryDraft;
 
-      switch (next(9)) {
+      // Money collected on a round is posted by the round itself; rounds.test.ts covers it.
+      switch (next(7)) {
         case 0: {
           // A charge goes through a file. A prepaid one ($0) posts nothing.
           const amount = BigInt(next(3) === 0 ? 0 : next(90000) + 1);
@@ -332,31 +285,25 @@ test("random payments in both currencies always balance", () => {
           continue;
         }
         case 1:
-          draft = driverCollected({ roundId, customerId, received, ...rate });
-          break;
-        case 2:
           draft = officePayment({ customerId, received, ...rate });
           break;
-        case 3:
+        case 2:
           draft = walletPayment({ customerId, wallet: pick(["fib", "fastpay", "zaincash"] as const), received, ...rate });
           break;
-        case 4:
-          draft = roundHandedIn({ roundId, countedUsdCents: BigInt(next(2) * (next(50000) + 1)), countedIqd: dinars });
-          break;
-        case 5:
+        case 3:
           draft = sentToChina({ amountUsdCents: cents });
           break;
-        case 6:
+        case 4:
           draft = cashOut({
             category: pick(["driver_pay", "fuel_car", "customs_airport", "rent_salaries", "other"] as const),
             amount: received,
             reason: "Random test",
           });
           break;
-        case 7:
+        case 5:
           draft = currencyExchange({ iqdGiven: dinars, usdCentsReceived: cents });
           break;
-        case 8: {
+        case 6: {
           const candidates = posted.map((p, index) => ({ p, index })).filter((c) => !c.p.reversed);
           if (candidates.length > 0) {
             const { p, index } = pick(candidates);

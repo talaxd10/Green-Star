@@ -5,6 +5,7 @@ import {
   baghdadDayStart,
   conversionAgrees,
   impliedRate,
+  isRateJump,
   iqdToUsdCents,
   rateFromPerDollar,
   usdCentsToIqd,
@@ -62,4 +63,12 @@ test("a day is a Baghdad day", () => {
   assert.equal(baghdadDay(new Date("2026-10-01T20:59:59Z")), "2026-10-01");
   assert.equal(baghdadDayStart("2026-10-02").toISOString(), "2026-10-01T21:00:00.000Z");
   assert.throws(() => baghdadDayStart("2 Oct"), TypeError);
+});
+
+test("a rate far from the last one is a jump", () => {
+  assert.equal(isRateJump(145000, 147250), false);
+  assert.equal(isRateJump(145000, 174000), false); // exactly 20%
+  assert.equal(isRateJump(145000, 174001), true);
+  assert.equal(isRateJump(145000, 1450), true); // typed per dollar instead of per hundred
+  assert.equal(isRateJump(145000, 1450000), true);
 });

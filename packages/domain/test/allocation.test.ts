@@ -53,3 +53,13 @@ test("a negative payment is refused and paid consignments are skipped", () => {
   const result = allocateOldestFirst(500n, [{ id: "paid", remainingUsdCents: 0n, confirmedAt: new Date(0) }]);
   assert.deepEqual(result, { allocations: [], unappliedUsdCents: 500n });
 });
+
+test("money taken at the door pays that consignment first, then the oldest", () => {
+  const result = allocateOldestFirst(7000n, open, "file-3");
+  assert.deepEqual(result.allocations, [
+    { consignmentId: "file-3", amountUsdCents: 6200n },
+    { consignmentId: "file-1", amountUsdCents: 800n },
+  ]);
+  // A consignment that is not open changes nothing.
+  assert.deepEqual(allocateOldestFirst(10000n, open, "file-9"), allocateOldestFirst(10000n, open));
+});
