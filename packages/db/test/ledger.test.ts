@@ -15,74 +15,31 @@ import {
   sentToChina,
   usd,
   walletPayment,
-  type AccountRef,
   type EntryDraft,
 } from "@green-star/domain";
-import { lit, psql, PsqlError, renderPost, requireEnv } from "../src/index.ts";
-
-const OWNER = requireEnv("DATABASE_URL");
-const APP = requireEnv("APP_DATABASE_URL");
-const USER = "99999999-9999-4999-8999-999999999999";
-
-const app = (sql: string) => psql(APP, sql);
-const owner = (sql: string) => psql(OWNER, sql);
-
-function post(draft: EntryDraft, happenedAt = new Date("2026-10-02T09:00:00Z"), key: string = randomUUID()): string {
-  return app(renderPost(draft, { happenedAt, createdBy: USER, idempotencyKey: key }));
-}
-
-function refused(run: () => unknown, pattern: RegExp): void {
-  assert.throws(run, (error: unknown) => {
-    assert.ok(error instanceof PsqlError, `expected a database error, got ${String(error)}`);
-    assert.match(error.stderr, pattern);
-    return true;
-  });
-}
-
-function setRate(day: string, ratePer100: number): void {
-  app(
-    `insert into fx_rates (day, iqd_per_100_usd, set_by) values (${lit(day)}, ${ratePer100}, ${lit(USER)})
-     on conflict (day) do update set iqd_per_100_usd = excluded.iqd_per_100_usd;`,
-  );
-}
-
-function accountKeySql(): string {
-  return `coalesce(a.code,
-            case a.kind when 'customer' then 'customer:' || a.customer_id
-                        else 'driver:' || a.round_id || ':' || a.currency end)`;
-}
-
-function balances(): Map<string, bigint> {
-  const out = app(
-    `select ${accountKeySql()} || '=' || coalesce(b.balance, 0)
-     from accounts a left join account_balances b on b.account_id = a.id;`,
-  );
-  const map = new Map<string, bigint>();
-  for (const row of out.split("\n").filter(Boolean)) {
-    const at = row.lastIndexOf("=");
-    map.set(row.slice(0, at), BigInt(row.slice(at + 1)));
-  }
-  return map;
-}
-
-function keyOf(ref: AccountRef): string {
-  switch (ref.type) {
-    case "system":
-      return ref.code;
-    case "customer":
-      return `customer:${ref.customerId}`;
-    case "driver_cash":
-      return `driver:${ref.roundId}:${ref.currency}`;
-  }
-}
-
-const health = () => app("select problem || ': ' || detail from gs_ledger_health();");
+import { lit, renderPost } from "../src/index.ts";
+import {
+  USER,
+  app,
+  balances,
+  charge,
+  confirmSql,
+  customerBalance,
+  draftShipmentSql,
+  health,
+  keyOf,
+  newCustomer,
+  owner,
+  post,
+  refused,
+  setRate,
+} from "./helpers.ts";
 
 test("a balanced entry posts and the balances follow", () => {
-  const customerId = randomUUID();
-  const id = post(fileConfirmed({ customerId, amountDueUsdCents: 8500n })!);
+  const customerId = newCustomer();
+  const id = post(officePayment({ customerId, received: usd(8500) }));
   assert.match(id, /^[0-9a-f-]{36}$/);
-  assert.equal(app(`select balance_usd_cents from customer_balances where customer_id = ${lit(customerId)};`), "8500");
+  assert.equal(customerBalance(customerId), -8500n);
   assert.equal(app(`select count(*) from journal_lines where entry_id = ${lit(id)};`), "2");
 });
 
@@ -121,7 +78,7 @@ test("lines inserted by hand are still checked at commit", () => {
 });
 
 test("the same idempotency key posts once", () => {
-  const customerId = randomUUID();
+  const customerId = newCustomer();
   const key = randomUUID();
   const draft = officePayment({ customerId, received: usd(4000) });
   const first = post(draft, undefined, key);
@@ -132,7 +89,7 @@ test("the same idempotency key posts once", () => {
 });
 
 test("nothing in the ledger can be edited or deleted", () => {
-  const id = post(officePayment({ customerId: randomUUID(), received: usd(100) }));
+  const id = post(officePayment({ customerId: newCustomer(), received: usd(100) }));
   // The app role has no permission at all.
   refused(() => app(`update journal_lines set amount = 1 where entry_id = ${lit(id)};`), /permission denied/);
   refused(() => app(`delete from journal_lines where entry_id = ${lit(id)};`), /permission denied/);
@@ -146,7 +103,7 @@ test("nothing in the ledger can be edited or deleted", () => {
 });
 
 test("an entry cannot grow after it is posted", () => {
-  const id = post(officePayment({ customerId: randomUUID(), received: usd(100) }));
+  const id = post(officePayment({ customerId: newCustomer(), received: usd(100) }));
   refused(
     () =>
       app(`insert into journal_lines (entry_id, account_id, currency, amount)
@@ -167,7 +124,7 @@ test("a line's currency must match its account", () => {
 });
 
 test("dinar payments need the day's rate and convert to the cent", () => {
-  const customerId = randomUUID();
+  const customerId = newCustomer();
   const day = new Date("2026-03-05T08:00:00Z");
   const draft = officePayment({ customerId, received: iqd(123250), ratePer100: 145000 });
 
@@ -199,14 +156,14 @@ test("the Baghdad day decides which rate applies", () => {
   setRate("2026-03-10", 145000);
   const late = new Date("2026-03-09T22:30:00Z");
   refused(
-    () => post(officePayment({ customerId: randomUUID(), received: iqd(150000), ratePer100: 150000 }), late),
+    () => post(officePayment({ customerId: newCustomer(), received: iqd(150000), ratePer100: 150000 }), late),
     /rate_mismatch: the rate for 2026-03-10 is 145000/,
   );
-  post(officePayment({ customerId: randomUUID(), received: iqd(145000), ratePer100: 145000 }), late);
+  post(officePayment({ customerId: newCustomer(), received: iqd(145000), ratePer100: 145000 }), late);
 });
 
 test("a mistake is fixed by an exact reversal, once", () => {
-  const customerId = randomUUID();
+  const customerId = newCustomer();
   setRate("2026-03-12", 147000);
   const day = new Date("2026-03-12T09:00:00Z");
   const id = post(officePayment({ customerId, received: iqd(91250), ratePer100: 147000 }), day);
@@ -268,7 +225,7 @@ test("accounts keep their identity", () => {
   refused(() => owner("delete from accounts where code = 'vault_usd';"), /account_immutable/);
   refused(() => owner("update accounts set currency = 'IQD' where code = 'vault_usd';"), /account_immutable/);
   refused(
-    () => app(`insert into accounts (kind, currency, customer_id, name) values ('customer', 'IQD', ${lit(randomUUID())}, 'x');`),
+    () => app(`insert into accounts (kind, currency, customer_id, name) values ('customer', 'IQD', ${lit(newCustomer())}, 'x');`),
     /accounts_customer_in_usd/,
   );
 });
@@ -278,15 +235,15 @@ test("the board's round 14 comes out exactly", () => {
   setRate("2026-10-02", 145000);
   const day = new Date("2026-10-02T12:00:00Z");
   const round = randomUUID();
-  const rebwar = randomUUID();
-  const shvan = randomUUID();
-  const dara = randomUUID();
-  const hemn = randomUUID();
+  const rebwar = newCustomer("Rebwar A.");
+  const shvan = newCustomer("Shvan K.");
+  const dara = newCustomer("Dara M.");
+  const hemn = newCustomer("Hemn S.");
   const before = balances();
 
-  for (const [customerId, cents] of [[rebwar, 8500n], [shvan, 4000n], [dara, 31000n], [hemn, 6200n]] as const) {
-    post(fileConfirmed({ customerId, amountDueUsdCents: cents })!, day);
-  }
+  // One file with all four customers, confirmed in one go.
+  const file = randomUUID();
+  app(`${draftShipmentSql(file, [[rebwar, 8500n], [shvan, 4000n], [dara, 31000n], [hemn, 6200n]])}\n${confirmSql(file, day)}`);
   // Rebwar paid 123,250 IQD. Shvan's goods are held. Dara is on account. Hemn was delivered, not paid.
   post(driverCollected({ roundId: round, customerId: rebwar, received: iqd(123250), ratePer100: 145000 }), day);
   // The driver hands in 123,250 IQD and no dollars.
@@ -310,8 +267,8 @@ test("the board's round 14 comes out exactly", () => {
 
 test("a short hand-in leaves the gap on the round", () => {
   const round = randomUUID();
-  const customerId = randomUUID();
-  post(fileConfirmed({ customerId, amountDueUsdCents: 10000n })!);
+  const customerId = newCustomer();
+  charge(customerId, 10000n);
   post(driverCollected({ roundId: round, customerId, received: usd(10000) }));
   post(roundHandedIn({ roundId: round, countedUsdCents: 9500n, countedIqd: 0n }));
   assert.equal(balances().get(`driver:${round}:USD`), 500n);
@@ -332,7 +289,7 @@ test("random payments in both currencies always balance", () => {
   ];
   for (const d of days) setRate(d.day, d.rate);
 
-  const customers = Array.from({ length: 8 }, () => randomUUID());
+  const customers = Array.from({ length: 8 }, () => newCustomer());
   const rounds = Array.from({ length: 3 }, () => randomUUID());
   const start = balances();
   const model = new Map<string, bigint>();
@@ -345,10 +302,11 @@ test("random payments in both currencies always balance", () => {
 
   const posted: { id: string; draft: EntryDraft; reversed: boolean }[] = [];
   let entries = 0;
+  let clock = 0;
 
   for (let batch = 0; batch < 8; batch++) {
     const statements: string[] = [];
-    const pending: ({ draft: EntryDraft } | { reverse: number })[] = [];
+    const pending: ({ draft: EntryDraft } | { reverse: number } | { charge: true })[] = [];
 
     for (let i = 0; i < 60; i++) {
       const d = pick(days);
@@ -359,12 +317,20 @@ test("random payments in both currencies always balance", () => {
       const inDinars = next(2) === 0;
       const received = inDinars ? iqd(dinars) : usd(cents);
       const rate = inDinars ? { ratePer100: d.rate } : {};
-      let draft: EntryDraft | null = null;
+      let draft: EntryDraft;
 
       switch (next(9)) {
-        case 0:
-          draft = fileConfirmed({ customerId, amountDueUsdCents: BigInt(next(3) === 0 ? 0 : next(90000) + 1) });
-          break;
+        case 0: {
+          // A charge goes through a file. A prepaid one ($0) posts nothing.
+          const amount = BigInt(next(3) === 0 ? 0 : next(90000) + 1);
+          const file = randomUUID();
+          clock += 1;
+          statements.push(`${draftShipmentSql(file, [[customerId, amount]])}\n${confirmSql(file, new Date(d.at.getTime() + clock))}`);
+          pending.push({ charge: true });
+          const charged = fileConfirmed({ customerId, amountDueUsdCents: amount });
+          if (charged) apply(charged, 1n);
+          continue;
+        }
         case 1:
           draft = driverCollected({ roundId, customerId, received, ...rate });
           break;
@@ -403,8 +369,9 @@ test("random payments in both currencies always balance", () => {
           }
           continue;
         }
+        default:
+          throw new Error("unreachable");
       }
-      if (draft === null) continue; // prepaid: posts nothing
       statements.push(renderPost(draft, { happenedAt: d.at, createdBy: USER, idempotencyKey: randomUUID() }));
       pending.push({ draft });
       apply(draft, 1n);
