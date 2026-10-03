@@ -222,6 +222,28 @@ test("a file adds to what is owed to China, customer by customer", async () => {
   assert.ok(after.byDay[0].chargedUsdCents >= 12_300);
 });
 
+test("the China account's lines read in order: each line's total follows from the one before", async () => {
+  const a = await s.customer();
+  const b = await s.customer();
+  await s.file([[a, 1_100], [b, 2_200]]);   // two charges at the same instant
+  // Money that moved three days ago, entered today: it belongs earlier in the account.
+  await s.send("POST", "/v1/cash-outs", { category: "china", amount: { amount: 700, currency: "USD" }, reason: "Entered late", happenedAt: daysAgo(3) });
+  await s.file([[a, 3_300]]);
+
+  const first = (await s.get("/v1/china-account?limit=4")).body;
+  const second = (await s.get(`/v1/china-account?limit=4&cursor=${first.nextCursor}`)).body;
+  const lines = [...first.lines, ...second.lines];
+  assert.equal(lines.length, 8);
+  assert.equal(new Set(lines.map((l: { entryId: string }) => l.entryId)).size, 8, "no line twice across pages");
+  assert.equal(lines[0].owedAfterUsdCents, first.owedUsdCents, "the newest line ends on what is owed now");
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    assert.equal(lines[i].owedAfterUsdCents - lines[i].owedChangeUsdCents, lines[i + 1].owedAfterUsdCents, `line ${i} follows line ${i + 1}`);
+    assert.ok(Date.parse(lines[i].happenedAt) >= Date.parse(lines[i + 1].happenedAt), "newest first, by when the money moved");
+  }
+  assert.ok(!lines.slice(0, 3).some((l: { reason: string | null }) => l.reason === "Entered late"), "the late entry is not at the top");
+  assert.equal((await s.get("/v1/china-account?cursor=abc")).status, 400);
+});
+
 test("vault money is changed between dinars and dollars at the rate it really got", async () => {
   await s.send("POST", "/v1/payments", { customerId: await s.customer(), received: { amount: 2_000_000, currency: "IQD" }, method: "office_cash" });
   const before = { usd: await s.account("vault_usd"), iqd: await s.account("vault_iqd") };
@@ -370,6 +392,20 @@ test("payments are listed with how each was paid, and the owner reads every mone
     ["fastpay", 1_000, "USD", 1_000],
   ]);
   assert.match(list[0].customerName, /^PAYER /);
+  assert.deepEqual(list.map((p: { roundId: string | null }) => p.roundId), [null, null], "paid at the office, not on a round");
+
+  // Money taken on a round says which round, whether it was cash or a wallet at the door.
+  const b = await s.customer();
+  const c = await s.customer();
+  const file = await s.file([[b, 2_000], [c, 3_000]]);
+  const round = await s.roundOut([file.by[b] as string, file.by[c] as string]);
+  await s.send("PUT", `/v1/rounds/${round}/results`, {
+    results: [result(file.by[b] as string, "paid", { amount: 2_000, currency: "USD" }), result(file.by[c] as string, "paid", { amount: 3_000, currency: "USD" }, "fib")],
+  });
+  for (const customer of [b, c]) {
+    const [payment] = (await s.get(`/v1/payments?customerId=${customer}`)).body.items;
+    assert.equal(payment.roundId, round, payment.method);
+  }
 
   for (const url of ["/v1/fx-rates/today", "/v1/fx-rates", "/v1/payments", "/v1/cash-outs", "/v1/vault", "/v1/ledger", "/v1/accounts", "/v1/china-account"]) {
     assert.equal((await s.get(url, ownerCookie)).status, 200, url);

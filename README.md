@@ -4,7 +4,7 @@ Delivery and payment system for Green Star (San Cargo). One office web app, one 
 
 ## What is built
 
-Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain`, the database's guarantees in `packages/db`, and the API in `apps/api` over its real routes. All of it runs against a real Postgres. Nothing is mocked.
+Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain`, the database's guarantees in `packages/db`, the API in `apps/api` over its real routes, and the office app's money arithmetic in `apps/web`. All of it runs against a real Postgres. Nothing is mocked.
 
 **Ledger core** (build order step 2)
 
@@ -183,6 +183,25 @@ What the API enforces:
 
 The shape of every request and reply is in `packages/contracts`.
 
+**The office screens**
+
+- `apps/web`: the office app. Next.js, for Chrome or Edge on a Windows desktop. English screens; Kurdish and Arabic names are shown exactly as written.
+
+Built so far: sign-in, Customers, a customer's page, Files, typing a file in, a file's page, Rounds, a new round, a round's page (results, the driver's cash, exceptions), Money (today's rate, payments, cash out, exchange, reversing), Vault close, China account, and Settings (accounts, devices, drivers, carriers, password).
+
+What the screens enforce:
+
+1. The browser only ever talks to the office app's own address. Requests to `/v1` are passed on to the API, so the session cookie never crosses sites.
+2. Each Save button holds the key for its click. If the connection drops and Save is clicked again, the same key goes with it and the work is done once.
+3. An amount is typed the way he writes it (`85`, `85.50`, `1,234.56`, `123,250`) and kept as a whole number. `85,5` is refused, not read as 855: a comma is a thousands mark, never a decimal point. Half a dinar is refused.
+4. The rate is typed the way the market quotes it, per $100, with the per-dollar rate shown beside it. A rate far from the last one is asked for again before it is taken.
+5. A round's rows are checked with the same rules as the database before anything is sent, so the screen says what is wrong on the row itself.
+6. Cash is counted note by note and shown beside what should be there. A gap cannot be saved without a note.
+7. The owner sees every screen and no Save button. If he asks the API directly, it refuses him, and so does the database.
+8. A session that ended while a screen was open sends the person back to sign in, and then back to where he was.
+
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, and the owner looking at all of it and changing nothing.
+
 ## Run it
 
 Needs Node 22.18 or newer, pnpm, and Postgres 16 with the `psql` command on your PATH.
@@ -205,6 +224,19 @@ pnpm --filter @green-star/api dev                                               
 ```
 
 `create-ceo` is how the first account is made, and how the CEO gets a new password if he loses his. It runs where the system is hosted, not in the app. Every other account is added by the CEO.
+
+To see the office app, with a made-up office already in it:
+
+```sh
+pnpm db:reset
+pnpm --filter @green-star/api seed-demo   # customers, files, rounds and money, all invented
+pnpm --filter @green-star/api dev         # in one window
+pnpm --filter @green-star/web dev         # in another: http://localhost:3000
+```
+
+Sign in as the CEO with `0770 000 0001`, the owner with `0770 000 0002`, or the monitor with `office-tv`. The password for all three is `greenstar-demo`. Open it as `localhost`, not `127.0.0.1`: the API only answers the address it was told the office app is on.
+
+The end-to-end test needs Chromium once: `pnpm --filter @green-star/web exec playwright install chromium`.
 
 `pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
@@ -269,6 +301,8 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **Tests use Node's built-in runner, not Vitest.** It does the job and is one less thing to install. The migration runner and the tests still need the `psql` command; the running API does not.
 - **Sign-in is built here, not with Better Auth.** Better Auth wants an email for every user and brings its own tables and ids. This system has three accounts, signs in with a phone number, and already keeps its rules in Postgres. What is built is small and each part is tested: scrypt hashes (Node's own), random session tokens stored as sha256, and the limits above.
 - **The office monitor signs in with a name, not a phone.** It is a screen, not a person, and has no number of its own.
+- **No shadcn/ui.** The screens use a small set of components written here (`apps/web/src/components/ui.tsx`), styled with Tailwind. It is about fifteen pieces, and they give the app its own look.
+- **Fonts are served by the app itself** (Archivo and IBM Plex Mono, the same as the plan boards), not fetched from Google, so the screens look the same with a slow connection.
 - **A file can be typed in by hand** (`POST /v1/shipments`). The board only has the Excel import, which waits on the real China files. Typing a file in is what makes the rest usable before then, and stays useful for a file the import cannot read.
 - **A payment at the office can name the consignment it is for** (`forConsignmentId`). Left out, it pays the oldest first, as the board says. It is there for the customer who comes in to pay for goods held in the car while an older file is still on his account.
 - **Merging a duplicate customer does not move money.** It works while the duplicate has nothing on the books. One that already has a charge or a payment is fixed the way every money mistake is: reversed and entered again under the right customer.
@@ -306,4 +340,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The Excel import (`/v1/imports`, waiting on the real China files), receipts and photos (`/v1/attachments`, which needs the file storage set up), the screens, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, the office monitor, settings, and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.
+The Excel import and its screen (`/v1/imports`, waiting on the real China files), receipts and photos (`/v1/attachments`, which needs the file storage set up), the Today screen, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, the office monitor and its settings, and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.

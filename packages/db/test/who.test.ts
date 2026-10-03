@@ -47,6 +47,8 @@ function everyChange(who: string): Record<string, string> {
   const shipment = randomUUID();
   const draft = randomUUID();
   app(draftShipmentSql(draft, [[customer, 4000n]]));
+  const prepaidDraft = randomUUID();
+  app(draftShipmentSql(prepaidDraft, [[customer, 0n]]));
   const { consignmentId } = charge(customer, 6000n);
   const round = roundOut([consignmentId]);                       // out, waiting for its result
   const { consignmentId: held } = charge(other, 2000n);
@@ -70,6 +72,8 @@ function everyChange(who: string): Record<string, string> {
     "start a draft file": `insert into shipments (id, code) values (${lit(shipment)}, ${lit(`GSSK-W${++n}`)});`,
     "add to a draft file": `insert into consignments (shipment_id, customer_id, amount_due_usd_cents) values (${lit(draft)}, ${lit(other)}, 1000);`,
     "confirm a file": `select gs_confirm_shipment(${lit(draft)}, ${u}, now());`,
+    "confirm a prepaid file": `select gs_confirm_shipment(${lit(prepaidDraft)}, ${u}, now());`,   // posts no money at all
+    "add a user": `insert into users (name, role, phone, created_by) values ('Added', 'owner', ${lit(phone())}, ${u});`,
     "open a dispute": `insert into disputes (consignment_id, kind, created_by) values (${lit(consignmentId)}, 'damaged', ${u});`,
     "allow an exception": `insert into exceptions (consignment_id, approved_by, reason) values (${lit(consignmentId)}, ${u}, 'ok');`,
     "create a round": `insert into rounds (driver_id, created_by) values (${lit(driver)}, ${u});`,
@@ -134,7 +138,7 @@ test("a row names the CEO who is acting, not another one", () => {
   // The second CEO is acting, and every statement names the first.
   const changes = everyChange(USER);
   const named = [
-    "change trust", "record a file", "confirm a file", "open a dispute", "allow an exception",
+    "change trust", "record a file", "confirm a file", "confirm a prepaid file", "add a user", "open a dispute", "allow an exception",
     "create a round", "put goods on a round", "enter a result with money", "enter a result without money",
     "hand in a round", "attach a receipt", "set the rate", "close the vault", "cancel a consignment",
   ];
@@ -194,6 +198,8 @@ test("a status the system works out is not logged as something a person did", ()
   assert.equal(app(`select status from consignments where id = ${lit(consignmentId)};`), "closed");
   assert.equal(app(`select status from shipments where id = ${lit(shipmentId)};`), "closed");
   assert.equal(logged(), afterConfirm, "listed, on_round, delivered_paid and closed were worked out, not typed");
+  assert.equal(app(`select count(*) from audit_log where entity = 'rounds' and entity_id = ${lit(round)} and action = 'update';`), "0",
+    "out, returned and handed in were worked out too");
 
   // Who put the goods on the round is logged.
   assert.equal(app(`select actor from audit_log where entity = 'round_stops' and action = 'insert' and after ->> 'consignment_id' = ${lit(consignmentId)};`), USER);
@@ -305,6 +311,10 @@ test("the files list shows what was expected, what came in and what stops a file
   assert.equal(app(`select balance_usd_cents || '|' || unpaid_consignments || '|' || over_limit from customer_overview where customer_id = ${lit(payFirst)};`), "3000|1|false");
   assert.equal(app(`select status || '|' || remaining_usd_cents || '|' || has_exception from consignment_details where consignment_id = ${lit(cPay)};`), "delivered_not_paid|3000|false");
   assert.equal(app(`select kind || '|' || currency || '|' || balance from account_overview where customer_id = ${lit(payFirst)};`), "customer|USD|3000");
+
+  // A consignment taken off the file is no longer counted on it.
+  app(`select gs_cancel_consignment(${lit(cWait)}, ${lit(USER)}, 'Wrong customer');`);
+  assert.equal(overview(), "reconciling|2|35000|2000|33000|0|1|1|2|1");
 });
 
 test("a payment at the office can name the consignment it is for, and only while it is posted", () => {

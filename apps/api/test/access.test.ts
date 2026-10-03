@@ -25,6 +25,21 @@ test("every address says who may call it", () => {
   assert.deepEqual(open, ["GET /healthz", "POST /v1/auth/login", "POST /v1/auth/logout"], "nothing else is open to everyone");
 });
 
+test("the owner only reads, the monitor sees only its own screen, and every change is the CEO's", () => {
+  const who = (route: { access: unknown }) => (route.access === "public" ? "public" : [...(route.access as string[])].sort().join(","));
+  const exceptions: Record<string, string> = {
+    "GET /v1/me": "ceo,monitor,owner",          // everyone may ask who he is
+    "GET /v1/users": "ceo",                     // accounts and devices are the CEO's business
+    "POST /v1/auth/password": "ceo,owner",      // changing your own password
+  };
+  for (const route of h.app.routeList) {
+    if (route.access === "public") continue;
+    const name = `${route.method} ${route.url}`;
+    const expected = exceptions[name] ?? (route.method === "GET" ? "ceo,owner" : "ceo");
+    assert.equal(who(route), expected, name);
+  }
+});
+
 test("an address that forgets to say who may call it stops the API from starting", async () => {
   const app = Fastify();
   app.addHook("onRoute", (route) => {

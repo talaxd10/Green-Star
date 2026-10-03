@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+  The office app's look: a paper desk, ink, and one green. Amber means "look
+  at this", red means money is missing, blue means "on account".
+  Raw values only: Tailwind's theme does not take var().
+*/
+@theme {
+  --color-paper: #f3f5f1;
+  --color-surface: #ffffff;
+  --color-sunken: #e9ede7;
+  --color-ink: #14201a;
+  --color-muted: #5a6a61;
+  --color-faint: #8b9a91;
+  --color-rule: #d6dcd6;
+  --color-rule-strong: #a3b0a8;
+
+  --color-green: #1d6b45;
+  --color-green-deep: #124a30;
+  --color-green-soft: #dff0e6;
+  --color-amber: #b7791f;
+  --color-amber-soft: #fbefd3;
+  --color-amber-ink: #7a4e00;
+  --color-red: #b5382c;
+  --color-red-soft: #f8e4e1;
+  --color-blue: #2458a8;
+  --color-blue-soft: #e2ebf8;
+
+  --color-rail: #14201a;
+  --color-rail-ink: #dfe8e2;
+  --color-rail-muted: #8fa398;
+  --color-rail-hover: #1f3027;
+
+  --font-sans: "Archivo Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --shadow-card: 0 1px 0 rgba(20, 32, 26, 0.04), 0 1px 2px rgba(20, 32, 26, 0.06);
+  --shadow-pop: 0 18px 50px -18px rgba(20, 32, 26, 0.45), 0 2px 6px rgba(20, 32, 26, 0.12);
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* Money and codes line up in columns. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Headings are a little narrower than body text, as on the plan boards. */
+.display {
+  font-stretch: 82%;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-green);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+dialog::backdrop {
+  background: rgba(20, 32, 26, 0.45);
+}
+
+dialog {
+  margin: auto;
+}
+
+/* Kurdish and Arabic names are stored and shown exactly as written. */
+[dir="auto"] {
+  unicode-bidi: plaintext;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

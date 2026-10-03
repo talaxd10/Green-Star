@@ -76,7 +76,9 @@ const RATES = `select f.day, f.iqd_per_100_usd, u.name as set_by, f.set_at from 
 
 const PAYMENTS = `
   select p.entry_id, p.customer_id, c.display_name as customer_name, p.kind, p.method, p.received_amount, p.received_currency,
-         p.iqd_per_100_usd, p.credited_usd_cents, p.happened_at, p.created_at, p.note, p.round_id,
+         p.iqd_per_100_usd, p.credited_usd_cents, p.happened_at, p.created_at, p.note,
+         -- The round a payment was taken on, whether it was cash to the driver or a wallet at the door.
+         coalesce(p.round_id, (select r.round_id from round_results r where r.payment_entry_id = p.entry_id)) as round_id,
          p.paid_for_consignment_id, p.reversed
   from payments p join customers c on c.id = p.customer_id`;
 
@@ -350,29 +352,39 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/china-account", { config: { access: READERS } }, async (request): Promise<ChinaAccount> => {
     const query = parse(ChinaAccountQuery, request.query);
-    const p = pager(query, "e.created_at", "c.entry_id::text");
-    const params: unknown[] = [];
+    // Lines are paged by their place in the account, so "owed after" always
+    // reads in order. The cursor is the place of the last line shown.
+    const before = query.cursor === undefined ? null : Number(query.cursor);
+    if (before !== null && (!Number.isSafeInteger(before) || before < 1)) {
+      throw new ApiError(400, "invalid_request", "cursor: That is not a cursor this list gave out", {
+        fields: { cursor: "That is not a cursor this list gave out" },
+      });
+    }
+    const params: unknown[] = [before, query.limit + 1];
     const where = dayRange(params, "c.happened_at", query.from, query.to);
     return read(ctx, async (q) => {
       const summary = await q.first<{ owed_usd_cents: number; charged_usd_cents: number; sent_usd_cents: number }>(
         "select owed_usd_cents, charged_usd_cents, sent_usd_cents from china_account_summary",
       );
       const byDay = await q.query("select day, charged_usd_cents, sent_usd_cents, owed_after_usd_cents from china_account_by_day order by day desc limit 60");
-      const rows = await q.query(
+      const rows = await q.query<Row & { position: number }>(
         `select c.entry_id, c.happened_at, c.day, c.kind, c.is_reversal, c.owed_change_usd_cents, c.owed_after_usd_cents,
-                c.shipment_code, c.customer_id, c.reason, ${p.columns}
-         from china_account c join journal_entries e on e.id = c.entry_id
-         where true ${where} ${p.where(params)} ${p.orderAndLimit(params)}`,
+                c.shipment_code, c.customer_id, c.reason, c.position
+         from china_account c
+         where ($1::bigint is null or c.position < $1) ${where}
+         order by c.position desc limit $2`,
         params,
       );
-      const page = p.page(rows, (row) => camel<ChinaAccountLine>(row));
+      const more = rows.length > query.limit;
+      const shown = more ? rows.slice(0, query.limit) : rows;
+      const last = shown[shown.length - 1];
       return {
         owedUsdCents: summary?.owed_usd_cents ?? 0,
         chargedUsdCents: summary?.charged_usd_cents ?? 0,
         sentUsdCents: summary?.sent_usd_cents ?? 0,
         byDay: byDay.map((row) => camel<ChinaAccount["byDay"][number]>(row)),
-        lines: page.items,
-        nextCursor: page.nextCursor,
+        lines: shown.map((row) => camel<ChinaAccountLine>({ ...row, position: undefined })),
+        nextCursor: more && last !== undefined ? String(last.position) : null,
       };
     });
   });

@@ -1,0 +1,33 @@
+{
+  "name": "@green-star/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "next typegen && tsc -p tsconfig.json",
+    "e2e": "node --env-file-if-exists=../../.env scripts/e2e.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@green-star/contracts": "workspace:*",
+    "@green-star/domain": "workspace:*",
+    "@tanstack/react-query": "^5.104.1",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "@playwright/test": "1.56.1",
+    "@green-star/db": "workspace:*"
+  }
+}
