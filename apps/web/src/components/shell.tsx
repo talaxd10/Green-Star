@@ -1,10 +1,11 @@
 "use client";
 
-import type { Action } from "@green-star/contracts";
+import type { Action, AlertCount } from "@green-star/contracts";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
-import { api } from "@/lib/api";
+import { api, type ApiFailure } from "@/lib/api";
 import { useMe, useRateToday } from "@/lib/hooks";
 import { ROLE } from "@/lib/labels";
 import { formatRatePerDollar } from "@/lib/money";
@@ -17,9 +18,13 @@ interface NavItem {
   icon: ReactNode;
   /** Shown only to those who can do this. Everything else is shown to everyone who sees the books. */
   needs?: Action;
+  /** Carries the number of open alerts. */
+  badge?: boolean;
 }
 
 const NAV: NavItem[] = [
+  { href: "/today", label: "Today", icon: icons.today },
+  { href: "/alerts", label: "Alerts", icon: icons.alerts, badge: true },
   { href: "/customers", label: "Customers", icon: icons.customers },
   { href: "/files", label: "Files", icon: icons.files },
   { href: "/rounds", label: "Rounds", icon: icons.rounds },
@@ -28,6 +33,28 @@ const NAV: NavItem[] = [
   { href: "/china", label: "China account", icon: icons.china },
   { href: "/settings", label: "Settings", icon: icons.settings },
 ];
+
+/** How many alerts are open. Asked again every minute: some alerts follow from the clock, not from a save. */
+function AlertBadge({ active }: { active: boolean }) {
+  const count = useQuery<AlertCount, ApiFailure>({
+    queryKey: ["/v1/alerts/count"],
+    queryFn: () => api.get<AlertCount>("/v1/alerts/count"),
+    refetchInterval: 60_000,
+  });
+  if (count.data === undefined || count.data.open === 0) return null;
+  const serious = count.data.high > 0;
+  return (
+    <span
+      className={cx(
+        "num ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] font-semibold",
+        active ? "bg-white text-green" : serious ? "bg-red text-white" : "bg-amber text-white",
+      )}
+      aria-label={`${count.data.open} open`}
+    >
+      {count.data.open}
+    </span>
+  );
+}
 
 function RateChip() {
   const rate = useRateToday();
@@ -93,6 +120,7 @@ export function Shell({ children }: { children: ReactNode }) {
               >
                 <span className={active ? "text-white" : "text-rail-muted"}>{item.icon}</span>
                 {item.label}
+                {item.badge ? <AlertBadge active={active} /> : null}
               </Link>
             );
           })}

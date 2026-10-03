@@ -168,6 +168,9 @@ test("eight clicks on Save at the same moment post one payment, and each gets th
   assert.equal(new Set(replies.map((r) => r.body.entryId)).size, 1);
   assert.equal(replies.filter((r) => r.headers["idempotent-replay"] === "true").length, 7);
   assert.equal(await s.balance(a), 7_000);
+  // The ledger posts under the request's own key too: its second lock, if the API's record of the request were ever lost.
+  const posted = await s.h.owner.query("select idempotency_key from journal_entries where id = $1", [replies[0]?.body.entryId]);
+  assert.equal(posted.rows[0].idempotency_key, `api:${key}`);
 
   const later = await s.send("POST", "/v1/payments", body, key);
   assert.deepEqual(later.body, replies[0]?.body, "the same key days later still returns the first answer");

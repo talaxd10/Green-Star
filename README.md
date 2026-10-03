@@ -4,7 +4,7 @@ Delivery and payment system for Green Star (San Cargo). One office web app, one 
 
 ## What is built
 
-Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain`, the database's guarantees in `packages/db`, the API in `apps/api` over its real routes, and the office app's money arithmetic in `apps/web`. All of it runs against a real Postgres. Nothing is mocked.
+Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain`, the database's guarantees in `packages/db`, the API in `apps/api` over its real routes, the worker in `apps/worker`, and the office app's money arithmetic in `apps/web`. All of it runs against a real Postgres. Nothing is mocked.
 
 **Ledger core** (build order step 2)
 
@@ -179,15 +179,60 @@ What the API enforces:
 | GET | `/v1/ledger`, `/v1/entries/:id` | CEO, owner | Entries by account and date |
 | GET | `/v1/accounts` | CEO, owner | Every account and what is on it |
 | GET | `/v1/china-account` | CEO, owner | Owed to China vs sent |
-| GET | `/healthz` | everyone | For the host's uptime check |
+| GET | `/v1/alerts` | CEO, owner | Open alerts, newest first. `?status=resolved` or `cleared`, `?kind=` |
+| GET | `/v1/alerts/count` | CEO, owner | How many are open, and how many of those are serious |
+| POST | `/v1/alerts/:id/resolve` | CEO | Close an alert with a note |
+| GET | `/v1/reports/today` | CEO, owner | Today's rounds: to collect, collected, counted in, per currency. Files in progress |
+| GET | `/v1/wallets` | CEO, owner | Each wallet: the books, what its app should show, the last checks |
+| POST | `/v1/wallets/checks` | CEO | What the wallet's app shows, typed in and compared |
+| GET, PUT | `/v1/settings` | CEO, owner / CEO | Held-in-car days, vault closing time, wallet check days, monitor widgets |
+| GET | `/v1/monitor` | everyone signed in | Only the widgets chosen for the office screen. No money |
+| GET | `/healthz` | everyone | For the host's uptime check. 503 when the database is down or the checks failed after the latest save |
 
 The shape of every request and reply is in `packages/contracts`.
+
+**Checks and alerts**
+
+- `packages/db/migrations/0008_alerts.sql`: the settings, the wallet check, the alerts, and the one function that works out what is wrong.
+- `apps/api/src/routes/alerts.ts`: alerts, the Today report, wallets, settings and the office monitor.
+- `apps/worker`: runs the checks on a timer.
+
+How it works. `gs_current_problems()` returns everything that does not match right now, one row per thing. `gs_sync_alerts()` writes that answer down: it opens an alert for each new thing and ends the ones that are no longer true. The API calls it at the end of every save, in the same transaction, so "the driver forgot to collect" is on the screen the moment the round is saved. The worker calls it every minute, for the alerts that follow from the clock and not from a save, and every 15th run also runs the ledger's own health check.
+
+| Alert | Raised when | Goes away by itself when |
+|---|---|---|
+| Not collected (high) | A pay-first customer has the goods, has not paid in full, and no exception was allowed. His top alert | He pays, or the CEO allows an exception |
+| Round cash (high) | A round is handed in and the cash counted differs from its receipts, per currency | The rest is counted in |
+| Vault count (high) | A vault count differs from what should be there, per currency | The count is taken back |
+| Wallet (high) | A wallet check found the app showing something else than the books | Never. It is resolved with a note |
+| The books (high) | The ledger's own health check finds anything at all | The health check is clean again |
+| Vault not counted (medium) | Cash moved in or out of the vault and closing time has passed without a count | The vault is counted |
+| Cartons (medium) | Cartons counted at the airport differ from the file | A "missing" dispute is opened, or the count is corrected |
+| Over limit (medium) | A trusted customer owes more than his own limit | He is back under it |
+| Held in the car (medium) | Goods have been held for the set number of days (3) | They go out again |
+| Old rate (medium) | A dinar payment was posted before the day's rate was changed | It is reversed |
+| Wallet check (low) | Money in a wallet has waited the set number of days (7) without a check | The wallet is checked |
+
+What the database enforces:
+
+1. What is wrong is worked out from the facts every time, never typed in. The application can read alerts and nothing else; they change only through the two functions.
+2. One thing that is wrong is one alert, however often the checks run and however many saves end at the same moment.
+3. An alert ends in one of two ways: the CEO resolves it with a note, or the facts change and it goes away by itself. Nothing deletes one, and a resolved alert's note is never rewritten, by any role.
+4. A resolved alert stays resolved while the same thing is still wrong. If it stops being wrong and happens again, that is a new alert.
+5. The office settings are one row, changed only by the CEO, and every change is in the audit log.
+6. A wallet check is never edited. A gap needs a note, and from then on the app is expected to show what it showed: the last reading plus everything entered since, the same rule as the vault.
+7. Only the schema owner can run the checks as of another moment. The tests use that to prove the clock rules; the application's checks are always now.
+
+What the API enforces:
+
+1. A save is never lost because a check failed. The checks run inside a savepoint; a failure is undone alone, counted and logged, and `/healthz` answers 503 until the checks next run clean.
+2. The monitor address sends only the chosen widgets, and a test lists every field name it is allowed to send. None is money.
 
 **The office screens**
 
 - `apps/web`: the office app. Next.js, for Chrome or Edge on a Windows desktop. English screens; Kurdish and Arabic names are shown exactly as written.
 
-Built so far: sign-in, Customers, a customer's page, Files, typing a file in, a file's page, Rounds, a new round, a round's page (results, the driver's cash, exceptions), Money (today's rate, payments, cash out, exchange, reversing), Vault close, China account, and Settings (accounts, devices, drivers, carriers, password).
+Built so far: sign-in, Today (alerts, the rate, today's rounds, to collect vs collected vs counted in, files in progress), Alerts (open, resolved, went away), Customers, a customer's page, Files, typing a file in, a file's page, Rounds, a new round, a round's page (results, the driver's cash, exceptions), Money (today's rate, payments, cash out, exchange, reversing, the wallet check), Vault close, China account, Settings (accounts, devices, the checks, the office monitor's widgets, drivers, carriers, password), and the office monitor at `/monitor`: full screen, read only, refreshes every 30 seconds.
 
 What the screens enforce:
 
@@ -199,8 +244,9 @@ What the screens enforce:
 6. Cash is counted note by note and shown beside what should be there. A gap cannot be saved without a note.
 7. The owner sees every screen and no Save button. If he asks the API directly, it refuses him, and so does the database.
 8. A session that ended while a screen was open sends the person back to sign in, and then back to where he was.
+9. The monitor account lands on the office screen and is sent back to it from every other address.
 
-`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, and the owner looking at all of it and changing nothing.
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, the checks and the office screen being set, the owner looking at all of it and changing nothing, and the monitor account reaching its own screen and nothing else.
 
 ## Run it
 
@@ -232,7 +278,10 @@ pnpm db:reset
 pnpm --filter @green-star/api seed-demo   # customers, files, rounds and money, all invented
 pnpm --filter @green-star/api dev         # in one window
 pnpm --filter @green-star/web dev         # in another: http://localhost:3000
+pnpm --filter @green-star/worker dev      # in a third: the checks that follow the clock
 ```
+
+The office works without the worker. What it adds are the alerts no save causes: goods held one day too long, a vault not counted by closing time, a wallet nobody checked this week. `CHECK_EVERY_SECONDS` (60) and `DEEP_CHECK_EVERY_RUNS` (15) change its pace.
 
 Sign in as the CEO with `0770 000 0001`, the owner with `0770 000 0002`, or the monitor with `office-tv`. The password for all three is `greenstar-demo`. Open it as `localhost`, not `127.0.0.1`: the API only answers the address it was told the office app is on.
 
@@ -317,6 +366,14 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **A vault gap is not posted to the ledger.** The board has no account for it. The gap is kept on the close with its note, and from then on the vault is expected to hold what was counted. `vault_status` shows the ledger, the noted gaps and the expected cash side by side.
 - **A round can be handed in more than once.** The missing part of a short hand-in may arrive the next day, and a transport office sends money in parts.
 - **The rate has a guard the board doesn't mention:** a change of more than 20% has to be confirmed.
+- **Alerts are worked out, not written by jobs.** The board has one job per check, each run at its own moment. Here one function says what is wrong now, and it is asked after every save and on a timer. A check can't be forgotten at one of its moments, and an alert goes away by itself when it stops being true.
+- **An alert has a third ending the board doesn't list: `cleared`.** The board has open and resolved. A customer who pays after the driver forgot to collect should not leave an alert waiting for a note.
+- **More alerts than the board's table:** a wallet gap, a dinar payment at a rate the day no longer has, and the ledger's own health check.
+- **The worker is a timer, not pg-boss.** There is nothing to queue yet. A queue comes with the Excel import, which is the first job that takes long and can fail halfway.
+- **The monitor's widgets are a list in the one settings row,** not a `monitor_widgets` table. Three widgets and their order fit in one column, and one change is one line in the audit log.
+- **The CEO and the owner can open the monitor too,** to see what the office sees. The board gives that address to the monitor alone.
+- **The vault reminder waits for cash to move.** The board reminds at closing time every day. Here it reminds only when cash moved since the last count, and keeps reminding on the following days until the vault is counted.
+- **The carton check is not tied to creating a round.** Whenever the count differs from the file there is an alert, and it goes when a "missing" dispute is opened.
 
 ## Assumed, to confirm with the CEO
 
@@ -333,6 +390,13 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **The vault's first close is its opening count.** Until the starting balances are loaded the ledger starts at zero, so the first count shows the whole box as a gap, with a note. Nothing else is needed to start.
 - **The ledger's vault can go below zero.** A cash out typed before the hand-in that funded it is not refused. It shows in `vault_status`.
 
+- **Money leaving a wallet has no entry on the board.** A wallet account only ever goes up. When he takes cash out of FIB or sends it on, the next wallet check shows a gap, he writes where it went, and the app is expected to show the new balance from then on. This keeps the check honest but the money's path is only in the note. To decide: an entry for "wallet to vault", and whether money to China can leave a wallet.
+- **The wallet check is due 7 days after the oldest money nobody has checked,** not on a fixed weekday. A wallet nobody paid into is never due.
+- **Goods are held too long after 3 days,** and **the vault closes at 18:00.** Both are in Settings.
+- **A resolved alert stays resolved even if it gets worse.** A customer over his limit by $50 whose alert was resolved does not raise a new one at $500 over. He raises one again after he has been back under the limit.
+- **What counts as serious.** High: not collected, any cash gap, a wallet gap, the books out of step. Medium: vault not counted, cartons, over limit, held too long, old rate. Low: a wallet check that is due.
+- **The office monitor shows customers' names** on the goods held in the car. The decision was "today's work, no money"; names were not discussed.
+
 - **A password is at least 10 characters.** No other rules.
 - **A session ends after 14 days without use** for the CEO and the owner, and after 400 days for the office monitor, because nobody is at the screen to sign in again.
 - **Wrong passwords.** 5 for one account from one address, 20 for one account from anywhere, or 30 from one address: wait 15 minutes.
@@ -340,4 +404,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The Excel import and its screen (`/v1/imports`, waiting on the real China files), receipts and photos (`/v1/attachments`, which needs the file storage set up), the Today screen, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, the office monitor and its settings, and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.
+The Excel import and its screen (`/v1/imports`, waiting on the real China files) and the file check that runs on each import, receipts and photos (`/v1/attachments`, which needs the file storage set up), statements and the weekly list of who to send one to, the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.

@@ -57,6 +57,12 @@ function everyChange(who: string): Record<string, string> {
   const { consignmentId: free } = charge(other, 1000n);
   const { consignmentId: loaded } = charge(other, 1500n);
   const planned = newRound([loaded], driver);                    // planned, with goods on it
+  // A pay-first customer who got his goods and paid nothing: an alert waiting to be resolved.
+  const { consignmentId: unpaid } = charge(other, 700n);
+  const forgot = roundOut([unpaid]);
+  enterResult({ roundId: forgot, consignmentId: unpaid, outcome: "unpaid" });
+  app("select gs_sync_alerts();");
+  const alert = app(`select id from alerts where kind = 'missed_collection' and subject = ${lit(unpaid)} and status = 'open';`);
   const u = lit(who);
   return {
     "add a customer": `insert into customers (display_name) values ('Someone');`,
@@ -88,6 +94,9 @@ function everyChange(who: string): Record<string, string> {
     // Later than any close another test makes, so the order of the test files does not matter.
     "close the vault": `select gs_close_vault(${lit(randomUUID())}, ${u}, '2040-01-01T00:00:00Z'::timestamptz + interval '${++n} seconds', null, null, 'count');`,
     "cancel a consignment": `select gs_cancel_consignment(${lit(free)}, ${u}, 'wrong');`,
+    "change a setting": `update settings set wallet_check_days = 7;`,
+    "check a wallet": `select gs_check_wallet(${lit(randomUUID())}, 'wallet_fastpay_usd', ${u}, 0, now(), 'read it in the app');`,
+    "resolve an alert": `select gs_resolve_alert(${lit(alert)}, ${u}, 'spoke to the driver');`,
     "record a request": `insert into api_requests (key, user_id, method, path, request_hash) values (${lit(randomUUID())}, ${u}, 'POST', '/v1/x', sha256('x'));`,
   };
 }
@@ -141,6 +150,7 @@ test("a row names the CEO who is acting, not another one", () => {
     "change trust", "record a file", "confirm a file", "confirm a prepaid file", "add a user", "open a dispute", "allow an exception",
     "create a round", "put goods on a round", "enter a result with money", "enter a result without money",
     "hand in a round", "attach a receipt", "set the rate", "close the vault", "cancel a consignment",
+    "check a wallet", "resolve an alert",
   ];
   for (const what of named) {
     refusedChange(what, () => appAs(second)(changes[what] as string), /actor_mismatch/);

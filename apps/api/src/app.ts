@@ -19,6 +19,7 @@ import { findSession, SESSION_COOKIE, type Auth } from "./auth/sessions.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError, fromDatabase, invalidRequest, notAllowed, notSignedIn } from "./errors.ts";
+import { alertRoutes } from "./routes/alerts.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { customerRoutes } from "./routes/customers.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -45,6 +46,8 @@ export interface AppContext {
   db: Db;
   /** A hash of nothing, checked when the account does not exist, so a wrong phone takes as long as a wrong password. */
   decoyHash: string;
+  /** The checks that run after every save: how often they failed since the API started, and whether the latest run did. */
+  checks: { failed: number; failing: boolean; lastError: string | null };
 }
 
 export interface RouteInfo {
@@ -96,7 +99,12 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
     bodyLimit: 1024 * 1024,
   });
 
-  app.decorate("ctx", { config, db, decoyHash: await hashPassword("no account has this password", config.scrypt) });
+  app.decorate("ctx", {
+    config,
+    db,
+    decoyHash: await hashPassword("no account has this password", config.scrypt),
+    checks: { failed: 0, failing: false, lastError: null },
+  });
   app.decorate("routeList", []);
   app.decorateRequest("auth", null);
 
@@ -177,6 +185,7 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
   await app.register(shipmentRoutes, { prefix: "/v1" });
   await app.register(roundRoutes, { prefix: "/v1" });
   await app.register(moneyRoutes, { prefix: "/v1" });
+  await app.register(alertRoutes, { prefix: "/v1" });
 
   return app;
 }

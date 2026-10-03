@@ -8,3 +8,4 @@ export * from "./customers.ts";
 export * from "./shipments.ts";
 export * from "./rounds.ts";
 export * from "./money.ts";
+export * from "./alerts.ts";

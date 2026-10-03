@@ -150,6 +150,7 @@ test("a list comes a page at a time, newest first, with nothing twice and nothin
     seen.push(...page.items.map((c: { id: string }) => c.id));
     cursor = page.nextCursor;
     pages += 1;
+    assert.ok(pages <= 10, "the pages come to an end");
     // A customer added while someone is paging does not shift the pages.
     if (pages === 1) await s.customer(`${word} late`);
   } while (cursor !== null);
@@ -165,9 +166,12 @@ test("phones and marks are added and removed, and one phone is the main one", as
   const id = await s.customer(undefined, { phones: [] });
   const first = nextPhone();
   const second = nextPhone();
-  assert.equal((await s.send("POST", `/v1/customers/${id}/phones`, { phone: first })).status, 201);
+  const withOne = await s.send("POST", `/v1/customers/${id}/phones`, { phone: first, primary: true });
+  assert.equal(withOne.status, 201);
+  assert.equal(withOne.body.phone, first);
   const withTwo = await s.send("POST", `/v1/customers/${id}/phones`, { phone: second, primary: true });
-  assert.equal(withTwo.body.phone, second, "the new main phone takes over");
+  assert.equal(withTwo.status, 201, JSON.stringify(withTwo.body));
+  assert.equal(withTwo.body.phone, second, "the new main phone takes over from the old one");
   assert.equal(withTwo.body.phoneList.filter((p: { primary: boolean }) => p.primary).length, 1);
 
   assert.equal((await s.send("POST", `/v1/customers/${id}/phones`, { phone: second })).body.code, "customer_phone_taken");

@@ -96,6 +96,9 @@ const RULES: Record<string, string> = {
   users_phone_format: "That is not a phone number",
   users_sign_in_name_format: "A sign-in name is 3 to 32 letters or digits, starting with a letter",
   users_name_not_blank: "Enter a name",
+  settings_held_days: "Held-in-car days is between 1 and 60",
+  settings_wallet_days: "Wallet check days is between 1 and 60",
+  settings_widgets: "That is not a widget the office screen can show",
 };
 
 /**
@@ -107,6 +110,7 @@ const INTERNAL = new Set(["actor_required", "actor_unknown", "actor_invalid", "a
 function statusFor(code: string): number {
   if (code.endsWith("_not_found")) return 404;
   if (code === "ceo_only") return 403;
+  if (code === "alert_not_open") return 409;
   return 422;
 }
 

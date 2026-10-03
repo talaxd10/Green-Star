@@ -205,6 +205,11 @@ await send("POST", "/v1/vault/close", {
   note: "$2 short. Counted twice. Will check yesterday's receipts.",
 });
 
+// -- The wallet check: FastPay was read in its app and matches. FIB and ZainCash are still to check.
+const { wallets } = await send("GET", "/v1/wallets");
+const fastpay = wallets.find((w: { code: string }) => w.code === "wallet_fastpay_usd");
+await send("POST", "/v1/wallets/checks", { id: randomUUID(), wallet: "wallet_fastpay_usd", appBalance: fastpay.expectedInApp });
+
 const health = await owner.query("select problem, detail from gs_ledger_health()");
 if (health.rows.length > 0) {
   console.error("The demo data left the books unsound:", health.rows);

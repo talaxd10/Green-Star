@@ -7,6 +7,7 @@ import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { CustomerPicker } from "@/components/customer-picker";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, Segmented, Select, Table, Td, Textarea, Th } from "@/components/ui";
+import { WalletsCard } from "@/components/wallets";
 import { api } from "@/lib/api";
 import { useCan, useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CASH_OUT, dayTime, METHOD } from "@/lib/labels";
@@ -365,6 +366,7 @@ function MoneyScreen() {
               {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : <ExchangeForm />}
             </Card>
           ) : null}
+          <WalletsCard canCheck={canEnter} />
         </div>
 
         <div className="flex flex-col gap-5">

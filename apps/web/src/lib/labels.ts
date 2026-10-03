@@ -1,6 +1,8 @@
 // The words on the screen for what the system stores, and the colour each one gets.
 
 import type {
+  AlertKind,
+  AlertSeverity,
   CashOutCategory,
   ConsignmentStatus,
   DisputeKind,
@@ -96,6 +98,27 @@ export const ENTRY: Record<EntryKind, string> = {
 };
 
 export const ROLE: Record<Role, string> = { ceo: "CEO", owner: "Owner", monitor: "Office monitor" };
+
+/** What an alert is about, in two or three words. */
+export const ALERT: Record<AlertKind, string> = {
+  missed_collection: "Not collected",
+  round_cash_gap: "Round cash",
+  vault_gap: "Vault count",
+  vault_not_closed: "Vault not counted",
+  carton_mismatch: "Cartons",
+  over_limit: "Over limit",
+  held_too_long: "Held in the car",
+  wallet_gap: "Wallet",
+  wallet_check_due: "Wallet check",
+  payment_at_old_rate: "Old rate",
+  books_out_of_step: "The books",
+};
+
+export const SEVERITY: Labelled<AlertSeverity> = {
+  high: { label: "High", tone: "red" },
+  medium: { label: "Medium", tone: "amber" },
+  low: { label: "Low", tone: "grey" },
+};
 
 const BAGHDAD = "Asia/Baghdad";
 const dayFormat = new Intl.DateTimeFormat("en-GB", { timeZone: BAGHDAD, day: "numeric", month: "short", year: "numeric" });

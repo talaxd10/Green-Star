@@ -17,7 +17,7 @@ after(() => h.close());
 const concrete = (url: string) => url.replace(/:[a-zA-Z]+/g, () => randomUUID());
 
 test("every address says who may call it", () => {
-  assert.ok(h.app.routeList.length >= 60, `only ${h.app.routeList.length} addresses`);
+  assert.ok(h.app.routeList.length >= 69, `only ${h.app.routeList.length} addresses`);
   for (const route of h.app.routeList) {
     assert.ok(route.access === "public" || (Array.isArray(route.access) && route.access.length > 0), `${route.method} ${route.url}`);
   }
@@ -31,6 +31,7 @@ test("the owner only reads, the monitor sees only its own screen, and every chan
     "GET /v1/me": "ceo,monitor,owner",          // everyone may ask who he is
     "GET /v1/users": "ceo",                     // accounts and devices are the CEO's business
     "POST /v1/auth/password": "ceo,owner",      // changing your own password
+    "GET /v1/monitor": "ceo,monitor,owner",     // the office screen, and the CEO looking at what it shows
   };
   for (const route of h.app.routeList) {
     if (route.access === "public") continue;
@@ -156,7 +157,7 @@ test("an address that does not exist says so, in the same shape as every other e
 test("the uptime check answers without a session and says nothing about the business", async () => {
   const reply = await call(h.app, "GET", "/healthz");
   assert.equal(reply.status, 200);
-  assert.deepEqual(reply.body, { ok: true });
+  assert.deepEqual(reply.body, { ok: true, database: true, checks: true });
 });
 
 test("whatever the API does, it cannot change the ledger without a CEO's name on the request", async () => {

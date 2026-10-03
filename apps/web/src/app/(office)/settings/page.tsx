@@ -1,6 +1,7 @@
 "use client";
 
-import type { Carrier, Driver, UserList, UserWithSessions } from "@green-star/contracts";
+import type { Carrier, Driver, MonitorWidget, Settings, UserList, UserWithSessions } from "@green-star/contracts";
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, Loading, PageHead, Problem, Select } from "@/components/ui";
@@ -262,17 +263,184 @@ function People({ kind }: { kind: "drivers" | "carriers" }) {
   );
 }
 
+/** The numbers the checks work from. */
+function Checks({ canChange }: { canChange: boolean }) {
+  const toast = useToast();
+  const settings = useGet<Settings>("/v1/settings");
+  const [draft, setDraft] = useState<{ held?: string; close?: string; wallet?: string }>({});
+  const save = useSave(
+    (body: unknown, key: string) => api.put<Settings>("/v1/settings", body, key),
+    () => {
+      toast("Settings saved");
+      setDraft({});
+    },
+  );
+  if (settings.data === undefined) {
+    return (
+      <Card>
+        <CardHead title="Checks" />
+        <Loading />
+      </Card>
+    );
+  }
+  const s = settings.data;
+  const held = draft.held ?? String(s.heldInCarDays);
+  const close = draft.close ?? s.vaultCloseTime;
+  const wallet = draft.wallet ?? String(s.walletCheckDays);
+  const days = (typed: string) => (/^\d{1,2}$/.test(typed.trim()) && Number(typed) >= 1 && Number(typed) <= 60 ? Number(typed) : null);
+  const body = {
+    ...(days(held) !== null && days(held) !== s.heldInCarDays ? { heldInCarDays: days(held) } : {}),
+    ...(/^([01]\d|2[0-3]):[0-5]\d$/.test(close) && close !== s.vaultCloseTime ? { vaultCloseTime: close } : {}),
+    ...(days(wallet) !== null && days(wallet) !== s.walletCheckDays ? { walletCheckDays: days(wallet) } : {}),
+  };
+  const closeOk = /^([01]\d|2[0-3]):[0-5]\d$/.test(close);
+  const valid = days(held) !== null && days(wallet) !== null && closeOk;
+
+  return (
+    <Card>
+      <CardHead title="Checks" hint="When the system raises an alert by itself." />
+      <form
+        className="flex flex-col gap-4 p-5"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void save.save(body);
+        }}
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Held in the car, days" hint="Goods held longer raise an alert." problem={save.fieldProblem("heldInCarDays") ?? (days(held) === null ? "1 to 60" : undefined)}>
+            {(id) => <Input id={id} className="num" inputMode="numeric" disabled={!canChange} value={held} onChange={(e) => setDraft({ ...draft, held: e.target.value })} />}
+          </Field>
+          <Field label="Vault closing time" hint="Baghdad time, 24-hour. The reminder starts here." problem={save.fieldProblem("vaultCloseTime") ?? (closeOk ? undefined : "Like 18:00")}>
+            {(id) => <Input id={id} className="num" inputMode="numeric" placeholder="18:00" disabled={!canChange} value={close} onChange={(e) => setDraft({ ...draft, close: e.target.value })} />}
+          </Field>
+          <Field label="Wallet check, days" hint="How long wallet money may wait." problem={save.fieldProblem("walletCheckDays") ?? (days(wallet) === null ? "1 to 60" : undefined)}>
+            {(id) => <Input id={id} className="num" inputMode="numeric" disabled={!canChange} value={wallet} onChange={(e) => setDraft({ ...draft, wallet: e.target.value })} />}
+          </Field>
+        </div>
+        <Problem of={save.problem} />
+        {canChange ? (
+          <div>
+            <Button type="submit" busy={save.saving} disabled={!valid || Object.keys(body).length === 0}>
+              Save the checks
+            </Button>
+          </div>
+        ) : null}
+      </form>
+    </Card>
+  );
+}
+
+const WIDGETS: Record<MonitorWidget, { label: string; text: string }> = {
+  files: { label: "Files", text: "Each file in progress and how many customers have their goods." },
+  rounds: { label: "Rounds", text: "Rounds that are loading, out or just back, and how many stops are done." },
+  held: { label: "Held in the car", text: "Goods that came back undelivered, and since when." },
+};
+const ALL_WIDGETS = Object.keys(WIDGETS) as MonitorWidget[];
+
+/** What the office screen shows, and in what order. */
+function OfficeMonitor({ canChange }: { canChange: boolean }) {
+  const toast = useToast();
+  const settings = useGet<Settings>("/v1/settings");
+  const [draft, setDraft] = useState<MonitorWidget[] | null>(null);
+  const save = useSave(
+    (body: unknown, key: string) => api.put<Settings>("/v1/settings", body, key),
+    () => {
+      toast("The office screen is updated");
+      setDraft(null);
+    },
+  );
+  if (settings.data === undefined) {
+    return (
+      <Card>
+        <CardHead title="Office monitor" />
+        <Loading />
+      </Card>
+    );
+  }
+  const saved = settings.data.monitorWidgets;
+  const shown = draft ?? saved;
+  const rows = [...shown, ...ALL_WIDGETS.filter((w) => !shown.includes(w))];
+  const changed = shown.join(",") !== saved.join(",");
+  const move = (widget: MonitorWidget, by: -1 | 1) => {
+    const at = shown.indexOf(widget);
+    const to = at + by;
+    if (at < 0 || to < 0 || to >= shown.length) return;
+    const next = [...shown];
+    next.splice(at, 1);
+    next.splice(to, 0, widget);
+    setDraft(next);
+  };
+
+  return (
+    <Card>
+      <CardHead
+        title="Office monitor"
+        hint="What the office screen shows, left to right. Never money."
+        action={
+          <Link href="/monitor" className="text-[13px] font-semibold text-green hover:underline">
+            Open the screen
+          </Link>
+        }
+      />
+      <ul className="divide-y divide-rule">
+        {rows.map((widget) => {
+          const on = shown.includes(widget);
+          const at = shown.indexOf(widget);
+          return (
+            <li key={widget} className="flex items-center gap-3 px-5 py-3">
+              <input
+                id={`widget-${widget}`}
+                type="checkbox"
+                className="size-4 accent-green"
+                checked={on}
+                disabled={!canChange}
+                onChange={() => setDraft(on ? shown.filter((w) => w !== widget) : [...shown, widget])}
+              />
+              <label htmlFor={`widget-${widget}`} className="min-w-0 flex-1">
+                <span className="font-semibold">{WIDGETS[widget].label}</span>
+                <span className="block text-[13px] text-muted">{WIDGETS[widget].text}</span>
+              </label>
+              {canChange && on ? (
+                <span className="flex gap-1">
+                  <Button small tone="quiet" aria-label={`Move ${WIDGETS[widget].label} earlier`} disabled={at === 0} onClick={() => move(widget, -1)}>
+                    ↑
+                  </Button>
+                  <Button small tone="quiet" aria-label={`Move ${WIDGETS[widget].label} later`} disabled={at === shown.length - 1} onClick={() => move(widget, 1)}>
+                    ↓
+                  </Button>
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {canChange ? (
+        <div className="flex flex-col gap-3 border-t border-rule p-5">
+          <Problem of={save.problem} />
+          <div>
+            <Button busy={save.saving} disabled={!changed} onClick={() => void save.save({ monitorWidgets: shown })}>
+              Save the screen
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const canManage = useCan("manage_users");
   return (
     <>
-      <PageHead title="Settings" hint="Accounts, the people who carry the goods, and your own password." />
+      <PageHead title="Settings" hint="Accounts, the checks, the office screen, the people who carry the goods, and your own password." />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <div className="flex flex-col gap-5">
           {canManage ? <Users /> : null}
+          <Checks canChange={canManage} />
           <MyPassword />
         </div>
         <div className="flex flex-col gap-5">
+          <OfficeMonitor canChange={canManage} />
           <People kind="drivers" />
           <People kind="carriers" />
         </div>

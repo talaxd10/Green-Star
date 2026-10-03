@@ -83,12 +83,39 @@ export async function write<T>(
       status,
       JSON.stringify(result.body ?? null),
     ]);
+    await runChecks(ctx, request, q);
     return { replay: false, status, body: result.body };
   });
 
   if (outcome.replay) void reply.header("Idempotent-Replay", "true");
   void reply.status(outcome.status);
   return outcome.body;
+}
+
+/**
+ * Brings the alerts in line with what was just saved, in the same
+ * transaction, so the alert is there the moment the save is.
+ *
+ * A save is never lost because a check failed: the check runs inside a
+ * savepoint, and if it fails it is undone alone, counted and logged. The
+ * worker runs the same checks on a timer and would bring the alerts back in
+ * line. /healthz says so while the latest run is a failed one, so a failing
+ * check does not go unseen.
+ */
+async function runChecks(ctx: AppContext, request: FastifyRequest, q: Queryable): Promise<void> {
+  await q.query("savepoint checks");
+  try {
+    await q.query("select gs_sync_alerts()");
+    await q.query("release savepoint checks");
+    ctx.checks.failing = false;
+  } catch (error) {
+    await q.query("rollback to savepoint checks");
+    ctx.checks.failed += 1;
+    ctx.checks.failing = true;
+    ctx.checks.lastError = error instanceof Error ? error.message : String(error);
+    request.log.error({ err: error }, "the checks failed after a save");
+    if (!ctx.config.log) console.error("the checks failed after a save:", error);
+  }
 }
 
 /** Reads in one read-only transaction. */

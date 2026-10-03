@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// Until the Today screen is built, the office opens on its customers.
+// The office opens on Today.
 export default function Home() {
-  redirect("/customers");
+  redirect("/today");
 }
