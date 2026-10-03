@@ -70,13 +70,21 @@ export interface CallOptions {
   /** The address the request comes from. */
   ip?: string;
   headers?: Record<string, string>;
+  /**
+   * The Idempotency-Key. Every write gets a new one, the way each click on
+   * Save does, unless a test passes its own or null for none.
+   */
+  key?: string | null;
 }
+
+const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export async function call(app: FastifyInstance, method: string, url: string, options: CallOptions = {}): Promise<Reply> {
   const headers: Record<string, string> = { ...options.headers };
   if (options.cookie) headers.cookie = options.cookie;
   if (options.origin !== undefined) headers.origin = options.origin;
   if (options.body !== undefined) headers["content-type"] ??= "application/json";
+  if (WRITES.has(method) && options.key !== null) headers["idempotency-key"] ??= options.key ?? randomUUID();
 
   const response = await app.inject({
     method: method as "GET",

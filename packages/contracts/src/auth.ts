@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { ACTIONS, ROLES } from "./access.ts";
+import { Name, Uuid } from "./common.ts";
 
 export const PASSWORD_MIN_LENGTH = 10;
 export const PASSWORD_MAX_LENGTH = 200;
@@ -10,10 +11,6 @@ const Password = z
   .string()
   .min(PASSWORD_MIN_LENGTH, `Use at least ${PASSWORD_MIN_LENGTH} characters`)
   .max(PASSWORD_MAX_LENGTH, `Use at most ${PASSWORD_MAX_LENGTH} characters`);
-
-const Name = z.string().trim().min(1, "Enter a name").max(120, "Use at most 120 characters");
-
-export const Uuid = z.uuid();
 
 /**
  * POST /v1/auth/login. A person types his phone number in any spelling

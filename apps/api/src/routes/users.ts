@@ -10,22 +10,20 @@
 
 import {
   CEO_ONLY,
+  IdParams,
   NewUserRequest,
   UpdateUserRequest,
-  Uuid,
   type UserList,
   type UserWithSessions,
 } from "@green-star/contracts";
 import { normalizePhone } from "@green-star/domain";
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import { authOf } from "../app.ts";
 import { hashPassword } from "../auth/passwords.ts";
 import { endSessions, toUser, type UserRow } from "../auth/sessions.ts";
 import type { Queryable } from "../db.ts";
 import { ApiError, notFound, parse } from "../errors.ts";
-
-const IdParams = z.object({ id: Uuid });
+import { write } from "../http.ts";
 
 interface UserListRow extends UserRow {
   created_at: Date;
@@ -84,7 +82,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/users", { config: { access: CEO_ONLY } }, async (request, reply): Promise<UserWithSessions> => {
-    const auth = authOf(request);
     const body = parse(NewUserRequest, request.body);
 
     let phone: string | null = null;
@@ -99,26 +96,24 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     const signInName = body.role === "monitor" ? body.signInName : null;
     const hash = await hashPassword(body.password, config.scrypt);
 
-    const created = await db.write(auth.user.id, async (q) => {
+    return write(app.ctx, request, reply, async ({ q, auth }) => {
       const id = await q.value<string>(
         `insert into users (name, role, phone, sign_in_name, created_by) values ($1, $2, $3, $4, $5) returning id`,
         [body.name, body.role, phone, signInName, auth.user.id],
       );
       await q.query("insert into user_credentials (user_id, password_hash) values ($1, $2)", [id, hash]);
-      return (await listUsers(q, auth.sessionId, id))[0];
+      const created = (await listUsers(q, auth.sessionId, id))[0];
+      if (created === undefined) throw new Error("the user was not created");
+      return { status: 201, body: created };
     });
-    if (created === undefined) throw new Error("the user was not created");
-    void reply.status(201);
-    return created;
   });
 
-  app.patch("/users/:id", { config: { access: CEO_ONLY } }, async (request): Promise<UserWithSessions> => {
-    const auth = authOf(request);
+  app.patch("/users/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<UserWithSessions> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(UpdateUserRequest, request.body);
     const hash = body.password === undefined ? null : await hashPassword(body.password, config.scrypt);
 
-    const updated = await db.write(auth.user.id, async (q) => {
+    return write(app.ctx, request, reply, async ({ q, auth }) => {
       const found = await q.first("select id from users where id = $1 for update", [id]);
       if (found === undefined) throw notFound("That user");
 
@@ -141,25 +136,23 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       if (body.active === false || hash !== null) {
         await endSessions(q, id, auth.user.id, id === auth.user.id ? auth.sessionId : null);
       }
-      return (await listUsers(q, auth.sessionId, id))[0];
+      const updated = (await listUsers(q, auth.sessionId, id))[0];
+      if (updated === undefined) throw notFound("That user");
+      return { body: updated };
     });
-    if (updated === undefined) throw notFound("That user");
-    return updated;
   });
 
   app.delete("/sessions/:id", { config: { access: CEO_ONLY } }, async (request, reply) => {
-    const auth = authOf(request);
     const { id } = parse(IdParams, request.params);
-    const ended = await db.write(auth.user.id, async (q) => {
+    await write(app.ctx, request, reply, async ({ q, auth }) => {
       const found = await q.first("select id from sessions where id = $1", [id]);
-      if (found === undefined) return false;
+      if (found === undefined) throw notFound("That device");
       await q.query("update sessions set revoked_at = now(), revoked_by = $2 where id = $1 and revoked_at is null", [
         id,
         auth.user.id,
       ]);
-      return true;
+      return { status: 204, body: null };
     });
-    if (!ended) throw notFound("That device");
-    return reply.status(204).send();
+    return reply.send();
   });
 }

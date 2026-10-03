@@ -17,7 +17,7 @@ after(() => h.close());
 const concrete = (url: string) => url.replace(/:[a-zA-Z]+/g, () => randomUUID());
 
 test("every address says who may call it", () => {
-  assert.ok(h.app.routeList.length >= 9);
+  assert.ok(h.app.routeList.length >= 60, `only ${h.app.routeList.length} addresses`);
   for (const route of h.app.routeList) {
     assert.ok(route.access === "public" || (Array.isArray(route.access) && route.access.length > 0), `${route.method} ${route.url}`);
   }
@@ -64,7 +64,39 @@ test("each address answers only the roles it names, and nobody who is not signed
       checked += 1;
     }
   }
-  assert.ok(checked >= 18);
+  assert.ok(checked >= 170, `only ${checked} role checks`);
+});
+
+test("every write needs its own key, so a double click on Save is done once", async () => {
+  const roles = await everyRole(h);
+  let checked = 0;
+  for (const route of h.app.routeList) {
+    if (route.access === "public" || route.method === "GET" || route.url === "/v1/auth/password") continue;
+    const url = concrete(route.url);
+    const none = await call(h.app, route.method, url, { body: {}, cookie: roles.ceo.cookie, key: null });
+    assert.equal(none.status, 400, `${route.method} ${route.url} without a key`);
+    assert.equal(none.body.code, "idempotency_key_required", `${route.method} ${route.url}`);
+    const bad = await call(h.app, route.method, url, { body: {}, cookie: roles.ceo.cookie, key: "short" });
+    assert.equal(bad.body.code, "idempotency_key_invalid", `${route.method} ${route.url}`);
+    checked += 1;
+  }
+  assert.ok(checked >= 30, `only ${checked} writes were checked`);
+
+  // A key belongs to one request by one user.
+  const key = randomUUID();
+  const body = { name: "Keyed customer" };
+  const first = await call(h.app, "POST", "/v1/customers", { cookie: roles.ceo.cookie, body, key });
+  assert.equal(first.status, 201);
+  const second = await seedUser(h, "ceo", "Another CEO");
+  const stolen = await call(h.app, "POST", "/v1/customers", { cookie: await signIn(h, second), body, key });
+  assert.equal(stolen.status, 422);
+  assert.equal(stolen.body.code, "idempotency_key_reused");
+  const elsewhere = await call(h.app, "POST", "/v1/drivers", { cookie: roles.ceo.cookie, body, key });
+  assert.equal(elsewhere.body.code, "idempotency_key_reused", "the same key on another address");
+  // A request that was refused did nothing, so its key is free to be sent again with the mistake fixed.
+  const retry = randomUUID();
+  assert.equal((await call(h.app, "POST", "/v1/customers", { cookie: roles.ceo.cookie, body: { name: "" }, key: retry })).status, 400);
+  assert.equal((await call(h.app, "POST", "/v1/customers", { cookie: roles.ceo.cookie, body: { name: "Fixed" }, key: retry })).status, 201);
 });
 
 test("the owner and the monitor cannot touch users or devices", async () => {
@@ -73,16 +105,22 @@ test("the owner and the monitor cannot touch users or devices", async () => {
   const victimCookie = await signIn(h, victim);
   const victimSession = (await call(h.app, "GET", "/v1/me", { cookie: victimCookie })).body.session.id;
 
+  // Refused by the API itself, before the request reaches the database (which would refuse it too).
+  const refusedByTheApi = async (cookie: string, method: string, url: string, body?: unknown) => {
+    const reply = await call(h.app, method, url, { cookie, body });
+    assert.equal(reply.status, 403, `${method} ${url}`);
+    assert.equal(reply.body.code, "not_allowed", `${method} ${url}`);
+  };
   for (const role of ["owner", "monitor"] as const) {
     const cookie = roles[role].cookie;
-    assert.equal((await call(h.app, "GET", "/v1/users", { cookie })).status, 403);
-    assert.equal((await call(h.app, "POST", "/v1/users", { cookie, body: { role: "owner", name: "Friend", phone: "0750 111 2233", password: PASSWORD } })).status, 403);
-    assert.equal((await call(h.app, "PATCH", `/v1/users/${victim.id}`, { cookie, body: { active: false } })).status, 403);
-    assert.equal((await call(h.app, "PATCH", `/v1/users/${roles.ceo.user.id}`, { cookie, body: { password: "taken over now" } })).status, 403);
-    assert.equal((await call(h.app, "DELETE", `/v1/sessions/${victimSession}`, { cookie })).status, 403);
+    await refusedByTheApi(cookie, "GET", "/v1/users");
+    await refusedByTheApi(cookie, "POST", "/v1/users", { role: "owner", name: "Friend", phone: "0750 111 2233", password: PASSWORD });
+    await refusedByTheApi(cookie, "PATCH", `/v1/users/${victim.id}`, { active: false });
+    await refusedByTheApi(cookie, "PATCH", `/v1/users/${roles.ceo.user.id}`, { password: "taken over now" });
+    await refusedByTheApi(cookie, "DELETE", `/v1/sessions/${victimSession}`);
   }
   // The monitor cannot change its own password either: it is a screen.
-  assert.equal((await call(h.app, "POST", "/v1/auth/password", { cookie: roles.monitor.cookie, body: { current: PASSWORD, next: "something else" } })).status, 403);
+  await refusedByTheApi(roles.monitor.cookie, "POST", "/v1/auth/password", { current: PASSWORD, next: "something else" });
 
   assert.equal((await call(h.app, "GET", "/v1/me", { cookie: victimCookie })).status, 200, "nothing happened to the victim");
   assert.equal((await h.owner.query("select count(*)::int as n from users where name = 'Friend'")).rows[0].n, 0);

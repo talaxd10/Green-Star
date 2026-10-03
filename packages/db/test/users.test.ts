@@ -48,18 +48,17 @@ test("every name on the books is a real user", () => {
   const stranger = randomUUID();
   // The entry names someone who is not the one acting.
   refused(() => app(paymentSql(stranger, customerId)), /actor_mismatch/);
-  // Outside the ledger, a name that is not a user is refused by the foreign key.
+  // Outside the ledger it is the same: the application can only name the one acting,
   const driver = randomUUID();
   app(`insert into drivers (id, name) values (${lit(driver)}, 'Karwan');`);
-  refused(
-    () => app(`insert into rounds (driver_id, created_by) values (${lit(driver)}, ${lit(stranger)});`),
-    /rounds_created_by_fk/,
-  );
-  refused(
-    () => app(`insert into source_files (filename, storage_key, sha256, uploaded_by)
-               values ('x.xlsx', 'files/x', ${lit("a".repeat(64))}, ${lit(stranger)});`),
-    /source_files_uploaded_by_fk/,
-  );
+  const roundSql = `insert into rounds (driver_id, created_by) values (${lit(driver)}, ${lit(stranger)});`;
+  const fileSql = `insert into source_files (filename, storage_key, sha256, uploaded_by)
+                   values ('x.xlsx', 'files/x', ${lit("a".repeat(64))}, ${lit(stranger)});`;
+  refused(() => app(roundSql), /actor_mismatch/);
+  refused(() => app(fileSql), /actor_mismatch/);
+  // and nobody at all can write a name that is not a user.
+  refused(() => owner(roundSql), /rounds_created_by_fk/);
+  refused(() => owner(fileSql), /source_files_uploaded_by_fk/);
   assert.equal(customerBalance(customerId), 0n);
 });
 

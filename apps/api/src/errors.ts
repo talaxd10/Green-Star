@@ -79,10 +79,20 @@ function isDatabaseError(error: unknown): error is DatabaseError {
 const TAKEN: Record<string, [code: string, message: string]> = {
   users_phone_key: ["phone_taken", "That phone number already has an account"],
   users_sign_in_name_key: ["name_taken", "That sign-in name is already used"],
+  customer_phones_phone_key: ["customer_phone_taken", "That phone number already belongs to a customer"],
+  customer_marks_mark_key: ["mark_taken", "That mark already belongs to a customer"],
+  shipments_code_key: ["file_code_taken", "There is already a file with that code"],
+  consignments_one_per_customer_per_file: ["customer_twice_on_file", "That customer is already on this file"],
+  exceptions_consignment_id_key: ["exception_exists", "An exception was already allowed for these goods"],
+  rounds_pkey: ["round_exists", "That round already exists"],
 };
 
 /** A rule on one value. Reached only when a request got past the checks here. */
 const RULES: Record<string, string> = {
+  customer_phones_format: "That is not a phone number",
+  drivers_phone_format: "That is not a phone number",
+  rounds_driver_or_carrier: "Pick a driver or a carrier",
+  consignments_other_within_amount: "Other charges cannot be more than the amount to collect",
   users_phone_format: "That is not a phone number",
   users_sign_in_name_format: "A sign-in name is 3 to 32 letters or digits, starting with a letter",
   users_name_not_blank: "Enter a name",

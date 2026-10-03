@@ -105,6 +105,29 @@ What the API enforces:
 9. Every error has the same shape and a code that never changes: `{ "code": "phone_taken", "message": "That phone number already has an account" }`.
 10. Logs name the address pattern (`/v1/users/:id`), never the real address, so nothing a person typed reaches them.
 
+**The rest of the API** (customers, files, rounds, money)
+
+- `packages/db/migrations/0006_api.sql`: the CEO-only rule and the audit log on every table outside the ledger, safe retries, merging a duplicate customer, and the lists the screens read.
+- `apps/api/src/routes`: one file per part of the business. Each route is a few lines: check the request, call the database's own function or read its view, return the result.
+
+What the database enforces, on top of everything above:
+
+1. Everything outside the ledger is changed only by a CEO too. The owner and the monitor can change nothing, anywhere.
+2. Wherever a row says who did something (entered by, counted by, approved by), it names the CEO who is signed in.
+3. Every change to customers, files, rounds, drivers and carriers is in `audit_log` with before and after. A status the system works out is not logged as something a person did.
+4. A request sent twice with the same key is done once.
+5. A duplicate customer is merged into the real one only while it has nothing on the books. After that it is used for nothing.
+6. A payment says which consignment it is for only while it is being posted.
+
+What the API enforces:
+
+1. Every write carries an `Idempotency-Key` header: one new value for each click on Save. The key is recorded in the same transaction as the change. The same key again returns the first answer and does nothing. Eight clicks at the same moment post one payment.
+2. The rows of a round are saved together or not at all.
+3. Money is `{ "amount": 8500, "currency": "USD" }`: a whole number in the smallest unit. A fraction, a zero or an unknown currency is refused before it reaches the database.
+4. A time in the future is refused.
+5. Lists come a page at a time, newest first. A row added while someone is paging never makes another appear twice or go missing.
+6. A search is words, not a pattern: `%` and `_` find only names that contain them.
+
 | | Address | Who | What it does |
 |---|---|---|---|
 | POST | `/v1/auth/login` | everyone | Sign in with phone and password |
@@ -115,7 +138,50 @@ What the API enforces:
 | POST | `/v1/users` | CEO | Add the owner or a monitor account |
 | PATCH | `/v1/users/:id` | CEO | Rename, switch off or on, set a password |
 | DELETE | `/v1/sessions/:id` | CEO | Sign out a device |
+| GET | `/v1/customers` | CEO, owner | Search by phone, mark or name; filter trusted, over limit, owing |
+| POST | `/v1/customers` | CEO | Create a customer or an agent company |
+| GET | `/v1/customers/:id` | CEO, owner | Balance, phones, marks, trust history |
+| PATCH | `/v1/customers/:id` | CEO | Name and kind; trust and limit, with who asked |
+| POST, DELETE | `/v1/customers/:id/phones` | CEO | Add or remove a phone |
+| POST, DELETE | `/v1/customers/:id/marks` | CEO | Add or remove a mark or a mark prefix |
+| POST | `/v1/customers/:id/merge` | CEO | Merge a duplicate into this customer |
+| GET | `/v1/shipments` | CEO, owner | Files by status |
+| POST | `/v1/shipments` | CEO | Type a file in by hand, as a draft |
+| GET | `/v1/shipments/:id` | CEO, owner | Consignments, expected vs collected, what blocks closing |
+| PUT | `/v1/shipments/:id` | CEO | Replace a draft's rows |
+| POST | `/v1/shipments/:id/confirm` | CEO | Post every charge in one transaction |
+| GET | `/v1/consignments` | CEO, owner | A customer's consignments, or the goods ready for a round |
+| POST | `/v1/consignments/:id/cancel` | CEO | Cancel one and reverse its charge |
+| POST | `/v1/consignments/:id/correct` | CEO | Replace one with the right amount |
+| GET, POST | `/v1/disputes` | CEO, owner / CEO | Problems with goods; open one and mark it sent to China |
+| PATCH | `/v1/disputes/:id` | CEO | Record China's answer and close it |
+| GET, POST | `/v1/drivers`, `/v1/carriers` | CEO, owner / CEO | Who carries the goods |
+| PATCH | `/v1/drivers/:id`, `/v1/carriers/:id` | CEO | Rename, switch off |
+| GET | `/v1/rounds` | CEO, owner | Rounds, newest first |
+| POST | `/v1/rounds` | CEO | New round: driver or carrier, consignments from any files, carton counts |
+| GET | `/v1/rounds/:id` | CEO, owner | Stops, outcomes, cash, hand-ins |
+| POST, DELETE | `/v1/rounds/:id/stops` | CEO | Put a consignment on the round, or take it off |
+| POST | `/v1/rounds/:id/depart` | CEO | The driver leaves |
+| PUT | `/v1/rounds/:id/results` | CEO | Outcome, amount, currency and method per customer |
+| POST | `/v1/round-results/:id/void` | CEO | Take a result back |
+| POST | `/v1/rounds/:id/hand-in` | CEO | Cash counted by denomination per currency |
+| POST | `/v1/hand-ins/:id/void` | CEO | Take a hand-in back |
+| POST | `/v1/exceptions` | CEO | Allow a pay-first handover without full payment, with a reason |
+| GET | `/v1/fx-rates/today`, `/v1/fx-rates` | CEO, owner | Today's rate; rates by day |
+| PUT | `/v1/fx-rates/:day` | CEO | Set a day's dinar rate (`today` or a date) |
+| GET, POST | `/v1/payments` | CEO, owner / CEO | Payments with how each was paid; an office or wallet payment |
+| GET, POST | `/v1/cash-outs` | CEO, owner / CEO | Cash out of the vault: China, driver pay, fuel and car, customs and airport, rent and salaries, other |
+| POST | `/v1/exchanges` | CEO | Dinars changed into dollars, or back |
+| GET | `/v1/vault` | CEO, owner | What should be in the box, the notes, the last closes |
+| POST | `/v1/vault/close` | CEO | Daily count by denomination per currency |
+| POST | `/v1/vault/closes/:id/void` | CEO | Take a wrong count back |
+| POST | `/v1/entries/:id/reverse` | CEO | Reverse a mistake with a reason |
+| GET | `/v1/ledger`, `/v1/entries/:id` | CEO, owner | Entries by account and date |
+| GET | `/v1/accounts` | CEO, owner | Every account and what is on it |
+| GET | `/v1/china-account` | CEO, owner | Owed to China vs sent |
 | GET | `/healthz` | everyone | For the host's uptime check |
+
+The shape of every request and reply is in `packages/contracts`.
 
 ## Run it
 
@@ -203,6 +269,10 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **Tests use Node's built-in runner, not Vitest.** It does the job and is one less thing to install. The migration runner and the tests still need the `psql` command; the running API does not.
 - **Sign-in is built here, not with Better Auth.** Better Auth wants an email for every user and brings its own tables and ids. This system has three accounts, signs in with a phone number, and already keeps its rules in Postgres. What is built is small and each part is tested: scrypt hashes (Node's own), random session tokens stored as sha256, and the limits above.
 - **The office monitor signs in with a name, not a phone.** It is a screen, not a person, and has no number of its own.
+- **A file can be typed in by hand** (`POST /v1/shipments`). The board only has the Excel import, which waits on the real China files. Typing a file in is what makes the rest usable before then, and stays useful for a file the import cannot read.
+- **A payment at the office can name the consignment it is for** (`forConsignmentId`). Left out, it pays the oldest first, as the board says. It is there for the customer who comes in to pay for goods held in the car while an older file is still on his account.
+- **Merging a duplicate customer does not move money.** It works while the duplicate has nothing on the books. One that already has a charge or a payment is fixed the way every money mistake is: reversed and entered again under the right customer.
+- **Extra addresses the board does not list**, because the screens need them: phones, drivers, carriers, stops, taking a result, a hand-in or a vault close back, cancelling and correcting a consignment, and the read side of payments, cash outs, the vault and the accounts.
 - **One ledger entry per customer charge**, not one per file, so a single charge can be reversed.
 - **A consignment can be `cancelled`.** The board has no such status. It is how a wrong amount or a wrong customer is fixed after a file is confirmed.
 - **Weight is stored in grams**, as a whole number, for the same reason money is stored in cents.
@@ -236,4 +306,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The rest of the API (customers, files, rounds, money), the Excel import, the screens, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, and starting balances. The audit log covers users so far; the other tables outside the ledger join it with their part of the API. The columns of `shipment_lines` are provisional until the real China files arrive.
+The Excel import (`/v1/imports`, waiting on the real China files), receipts and photos (`/v1/attachments`, which needs the file storage set up), the screens, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, the office monitor, settings, and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.

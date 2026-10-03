@@ -97,7 +97,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/me", { config: { access: EVERYONE } }, async (request): Promise<Me> => toMe(authOf(request)));
 
-  app.post("/auth/password", { config: { access: READERS } }, async (request, reply) => {
+  app.post("/auth/password", { config: { access: READERS, keyless: true } }, async (request, reply) => {
     const auth = authOf(request);
     const body = parse(ChangePasswordRequest, request.body);
     const key = auth.user.phone ?? auth.user.signInName ?? auth.user.id;

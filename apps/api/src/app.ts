@@ -20,7 +20,11 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError, fromDatabase, invalidRequest, notAllowed, notSignedIn } from "./errors.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { customerRoutes } from "./routes/customers.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { moneyRoutes } from "./routes/money.ts";
+import { roundRoutes } from "./routes/rounds.ts";
+import { shipmentRoutes } from "./routes/shipments.ts";
 import { userRoutes } from "./routes/users.ts";
 
 declare module "fastify" {
@@ -31,6 +35,8 @@ declare module "fastify" {
   interface FastifyContextConfig {
     /** Who may call this address. Required on every route. */
     access?: Access;
+    /** True for the few writes that are safe to repeat as they are and take no Idempotency-Key. */
+    keyless?: boolean;
   }
 }
 
@@ -62,6 +68,21 @@ export function authOf(request: FastifyRequest): Auth {
 }
 
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+const KEY = /^[A-Za-z0-9._:-]{8,200}$/;
+
+/** The request's Idempotency-Key: one new value for each click on Save. */
+export function requireKey(request: FastifyRequest): string {
+  const header = request.headers["idempotency-key"];
+  const key = Array.isArray(header) ? header[0] : header;
+  if (key === undefined || key === "") {
+    throw new ApiError(400, "idempotency_key_required", "Send an Idempotency-Key header: one new value for each click on Save");
+  }
+  if (!KEY.test(key)) {
+    throw new ApiError(400, "idempotency_key_invalid", "An Idempotency-Key is 8 to 200 letters, digits, dots, dashes, colons or underscores");
+  }
+  return key;
+}
 
 export async function buildApp(config: Config, db: Db): Promise<FastifyInstance> {
   const app = Fastify({
@@ -113,6 +134,10 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
     if (auth === null) throw notSignedIn();
     if (!(access as readonly Role[]).includes(auth.user.role)) throw notAllowed();
     request.auth = auth;
+
+    // Every write carries a key, so a double click on Save is done once.
+    // Asked for here, before anything else is looked at.
+    if (UNSAFE.has(request.method) && request.routeOptions.config.keyless !== true) requireKey(request);
   });
 
   app.addHook("onResponse", async (request, reply) => {
@@ -136,6 +161,8 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
     const known = toApiError(error);
     if (known === null) {
       request.log.error({ err: error }, "unexpected error");
+      // With the log switched off (the tests), an error nobody expected is still shown.
+      if (!config.log) console.error(error);
       await reply.status(500).send(new ApiError(500, "internal_error", "Something went wrong. Nothing was saved.").body());
       return;
     }
@@ -146,6 +173,10 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/v1" });
   await app.register(userRoutes, { prefix: "/v1" });
+  await app.register(customerRoutes, { prefix: "/v1" });
+  await app.register(shipmentRoutes, { prefix: "/v1" });
+  await app.register(roundRoutes, { prefix: "/v1" });
+  await app.register(moneyRoutes, { prefix: "/v1" });
 
   return app;
 }

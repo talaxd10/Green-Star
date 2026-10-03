@@ -255,6 +255,21 @@ test("changing your password needs the current one and signs out your other devi
   assert.deepEqual(log.rows[0].after, { password: "changed" });
 });
 
+test("guessing the current password from a signed-in device is slowed down the same way", async () => {
+  const owner = await seedUser(h, "owner");
+  const cookie = await signIn(h, owner);
+  const next = "the thief's password";
+  for (let i = 0; i < 5; i += 1) {
+    const reply = await call(h.app, "POST", "/v1/auth/password", { cookie, body: { current: `guess number ${i}`, next } });
+    assert.equal(reply.status, 422);
+  }
+  // The sixth try is refused without looking, even with the right current password.
+  const blocked = await call(h.app, "POST", "/v1/auth/password", { cookie, body: { current: PASSWORD, next } });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.code, "too_many_attempts");
+  assert.equal((await call(h.app, "POST", "/v1/auth/login", { ip: "198.51.100.77", body: { phone: owner.phone, password: PASSWORD } })).status, 200, "the password did not change");
+});
+
 test("another website cannot use a signed-in browser", async () => {
   const owner = await seedUser(h, "owner");
   const cookie = await signIn(h, owner, { origin: WEB });
