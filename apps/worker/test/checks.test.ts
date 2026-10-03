@@ -19,6 +19,24 @@ const owner = (sql: string) => psql(OWNER, sql);
 const pool = new pg.Pool({ connectionString: APP, max: 2 });
 after(() => pool.end());
 
+/** Waits until something is true, and fails the test if it never is. A test never waits for ever. */
+async function until(done: () => boolean, what: string, ms = 5000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error(`waited ${ms} ms and still not: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** The promise, or a failed test if it takes longer than this. */
+function within<T>(promise: Promise<T>, what: string, ms = 5000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`waited ${ms} ms and still not: ${what}`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 const alerts = (kind: string, subject: string) =>
   owner(`select coalesce(string_agg(status::text, ' ' order by opened_at, id), '') from alerts where kind = ${lit(kind)} and subject = ${lit(subject)};`);
 
@@ -85,19 +103,20 @@ test("only the deep run reads the whole ledger", async () => {
 test("the worker runs now, then on its timer, and stops when told to", async () => {
   const lines: Record<string, unknown>[] = [];
   const worker = startWorker(pool, { everySeconds: 0.05, deepEvery: 2 }, (line) => lines.push(line));
-  while (lines.length < 3) await new Promise((resolve) => setTimeout(resolve, 10));
-  worker.stop();
-  await worker.done;
+  try {
+    await until(() => lines.length >= 3, "three runs");
+  } finally {
+    worker.stop();
+  }
+  await within(worker.done, "the worker stopping");
   assert.deepEqual(lines.slice(0, 3).map((line) => [line.msg, line.deep]), [["checks", true], ["checks", false], ["checks", true]]);
 
   // Asleep for an hour, it still stops at once.
   const slow: Record<string, unknown>[] = [];
   const sleeper = startWorker(pool, { everySeconds: 3600, deepEvery: 1 }, (line) => slow.push(line));
-  while (slow.length < 1) await new Promise((resolve) => setTimeout(resolve, 10));
-  const asked = Date.now();
+  await until(() => slow.length >= 1, "the first run");
   sleeper.stop();
-  await sleeper.done;
-  assert.ok(Date.now() - asked < 1000, "stop() does not wait for the timer");
+  await within(sleeper.done, "stop() ending the worker without waiting for its timer", 1000);
   assert.equal(slow.length, 1);
 });
 
@@ -112,9 +131,12 @@ test("a run that fails is logged and the next one still happens", async () => {
   } as unknown as pg.Pool;
   const lines: Record<string, unknown>[] = [];
   const worker = startWorker(flaky, { everySeconds: 0.02, deepEvery: 100 }, (line) => lines.push(line));
-  while (lines.length < 4) await new Promise((resolve) => setTimeout(resolve, 10));
-  worker.stop();
-  await worker.done;
+  try {
+    await until(() => lines.length >= 4, "two failed runs and two that worked");
+  } finally {
+    worker.stop();
+  }
+  await within(worker.done, "the worker stopping");
   assert.deepEqual(lines.slice(0, 4).map((line) => line.msg), ["checks failed", "checks failed", "checks", "checks"]);
   assert.equal(lines[0]?.error, "the database is restarting");
 });

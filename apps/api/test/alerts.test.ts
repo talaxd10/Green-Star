@@ -107,9 +107,12 @@ test("the CEO resolves an alert with a note; it stays resolved while the same th
   assert.equal(missing.body.code, "alert_not_found");
   assert.equal(about(await alerts(), "missed_collection", consignment).length, 1, "still open after all that");
 
+  const counted = (await s.get("/v1/alerts/count")).body;
   const key = randomUUID();
   const done = await s.send("POST", url, { note: "  Called him, he pays tomorrow " }, key);
   assert.equal(done.status, 200, JSON.stringify(done.body));
+  const countedAfter = (await s.get("/v1/alerts/count")).body;
+  assert.deepEqual([countedAfter.open, countedAfter.high], [counted.open - 1, counted.high - 1], "a resolved alert is no longer counted as open");
   assert.deepEqual(
     [done.body.status, done.body.note, done.body.resolvedByName, done.body.stillWrong, done.body.clearedAt],
     ["resolved", "Called him, he pays tomorrow", "Sarkar", true, null],
@@ -299,6 +302,9 @@ test("Today: what the rounds went out to collect, what they took, and what was c
   // Money paid at the office is its own line.
   await s.send("POST", "/v1/payments", { customerId: forgot, received: { amount: 1_000, currency: "USD" }, method: "office_cash" });
   await s.send("POST", "/v1/payments", { customerId: forgot, received: { amount: 14_500, currency: "IQD" }, method: "fib" });
+  // One that was paid yesterday and typed in today is yesterday's money.
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+  assert.equal((await s.send("POST", "/v1/payments", { customerId: forgot, received: { amount: 500, currency: "USD" }, method: "office_cash", happenedAt: yesterday })).status, 201);
   const paid = (await s.get("/v1/reports/today")).body;
   assert.equal(paid.officePaymentsUsdCents - officeBefore, 2_000);
   assert.equal(paid.collectedUsdCents, counted.collectedUsdCents, "paying at the office is not the round collecting");
@@ -413,8 +419,17 @@ test("the settings are the CEO's to change, and every change is on record", asyn
   );
   assert.deepEqual([rows[0].actor, rows[0].was, rows[0].is], [ceo.id, "3", "5"]);
 
-  const back = await s.send("PUT", "/v1/settings", { heldInCarDays: 3, vaultCloseTime: "18:00" });
-  assert.deepEqual([back.body.heldInCarDays, back.body.vaultCloseTime], [3, "18:00"]);
+  // Only what is sent changes. Everything else stays as it was set.
+  const one = await s.send("PUT", "/v1/settings", { walletCheckDays: 9 });
+  assert.deepEqual(
+    [one.body.heldInCarDays, one.body.vaultCloseTime, one.body.walletCheckDays, one.body.monitorWidgets],
+    [5, "17:30", 9, ["files", "rounds", "held"]],
+  );
+  const widgets = await s.send("PUT", "/v1/settings", { monitorWidgets: ["rounds"] });
+  assert.deepEqual([widgets.body.heldInCarDays, widgets.body.vaultCloseTime, widgets.body.walletCheckDays, widgets.body.monitorWidgets], [5, "17:30", 9, ["rounds"]]);
+
+  const back = await s.send("PUT", "/v1/settings", { heldInCarDays: 3, vaultCloseTime: "18:00", walletCheckDays: 7, monitorWidgets: ["files", "rounds", "held"] });
+  assert.deepEqual([back.body.heldInCarDays, back.body.vaultCloseTime, back.body.walletCheckDays, back.body.monitorWidgets], [3, "18:00", 7, ["files", "rounds", "held"]]);
 });
 
 test("the office monitor shows the chosen widgets, in the chosen order, and no money", async () => {

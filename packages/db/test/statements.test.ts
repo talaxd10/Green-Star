@@ -88,12 +88,24 @@ test("a mistake and its reversal are left off together, and the statement still 
     "false,true,false,true",
   );
 
+  // The line that takes a payment back says what it took back: how it was paid, and how much.
+  assert.equal(
+    app(
+      `select string_agg(coalesce(method::text, '-') || ':' || coalesce(received_amount::text, '-'), ',' order by line_no)
+       from gs_customer_statement(${lit(customer)}, true);`,
+    ),
+    "-:-,office_cash:15000,office_cash:5000,office_cash:15000",
+  );
+
   // A charge taken back by cancelling the consignment goes the same way.
   const { consignmentId } = charge(customer, 7000n, at(8));
   assert.equal(lastBalance(customer), 22000n);
   app(`select gs_cancel_consignment(${lit(consignmentId)}, ${lit(USER)}, 'Goods belonged to someone else');`);
   assert.equal(lines(customer), "1:file_confirmed:20000:20000 2:office_payment:-5000:15000");
   assert.equal(lines(customer, true).split(" ").length, 6);
+  // Both the charge and the line that took it back say which file it was.
+  assert.equal(app(`select count(*) from gs_customer_statement(${lit(customer)}, true) where what = 'file_confirmed' and shipment_code is null;`), "0");
+  assert.equal(app(`select count(*) from gs_customer_statement(${lit(customer)}, true) where what = 'file_confirmed' and is_correction;`), "2");
   assert.equal(lastBalance(customer, true), 15000n);
   assert.equal(customerBalance(customer), 15000n);
 });
