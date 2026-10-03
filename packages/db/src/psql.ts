@@ -38,3 +38,17 @@ export function requireEnv(name: string): string {
 export function lit(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
+
+/**
+ * The same connection URL, with every statement on it acting as this user.
+ * The database refuses changes from the application that carry no name
+ * (gs.actor); the API sets it per transaction, scripts and tests set it here.
+ */
+export function withActor(url: string, userId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+    throw new TypeError(`not a user id: ${userId}`);
+  }
+  const out = new URL(url);
+  out.searchParams.set("options", `-c gs.actor=${userId}`);
+  return out.toString().replaceAll("+", "%20");
+}

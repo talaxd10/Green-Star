@@ -4,7 +4,7 @@ Delivery and payment system for Green Star (San Cargo). One office web app, one 
 
 ## What is built
 
-Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain` and the database's guarantees in `packages/db`, against a real Postgres.
+Tested on Postgres 16. `pnpm test` runs every test: the pure rules in `packages/domain`, the database's guarantees in `packages/db`, and the API in `apps/api` over its real routes. All of it runs against a real Postgres. Nothing is mocked.
 
 **Ledger core** (build order step 2)
 
@@ -75,6 +75,48 @@ Views: `payments` (every payment with how it was paid, read from the ledger), `p
 
 `select * from gs_ledger_health();` returns one row per problem. Empty means the books, the allocations, the rounds and every status are sound.
 
+**Sign-in and the API** (build order step 1)
+
+- `packages/db/migrations/0005_users.sql`: users, passwords, sessions, sign-in tries, the audit log, and who may change what.
+- `packages/contracts`: the shapes the API takes and returns, shared with the office app.
+- `apps/api`: the API. Fastify, REST with JSON under `/v1`.
+
+Three accounts, as the CEO asked: he does everything, the owner sees everything and changes nothing, and the office monitor is a screen.
+
+What the database enforces, whatever the API does:
+
+1. Every "who did it" in the system is a real user.
+2. The API tells the database who is acting in each transaction. A change that carries no name is refused.
+3. A ledger entry is posted by an active CEO, and by the one who is signed in. The owner and the monitor can never post money, under their own name or anyone else's.
+4. Users are added and changed only by a CEO. A password is set only by a CEO or by the user himself.
+5. A user keeps his role and is never deleted, because his name is on what he did. He is switched off instead. There is always one active CEO.
+6. Every change to a user is in `audit_log` with before and after. The log is never edited, and a password never reaches it.
+
+What the API enforces:
+
+1. Every address says who may call it. One that forgets stops the API from starting. A test calls every address as every role.
+2. A person signs in with his phone, typed any way (`0770 123 4567` or `+964 770 123 4567`). The monitor signs in with a name.
+3. A wrong phone and a wrong password get the same answer, and take the same time.
+4. Five wrong passwords make that account wait 15 minutes from that address. Someone guessing from elsewhere cannot lock the CEO out of his own office.
+5. The session is a cookie that scripts on the page cannot read. The database keeps only its sha256, so reading the sessions table signs nobody in.
+6. One session per device. Each can be ended on its own. Switching a user off or setting his password signs him out everywhere.
+7. Another website cannot use a signed-in browser: the cookie is not sent across sites, and a request that names another site is refused.
+8. Everything that only reads runs in a read-only transaction.
+9. Every error has the same shape and a code that never changes: `{ "code": "phone_taken", "message": "That phone number already has an account" }`.
+10. Logs name the address pattern (`/v1/users/:id`), never the real address, so nothing a person typed reaches them.
+
+| | Address | Who | What it does |
+|---|---|---|---|
+| POST | `/v1/auth/login` | everyone | Sign in with phone and password |
+| POST | `/v1/auth/logout` | everyone | End this device's session |
+| GET | `/v1/me` | everyone | Who I am and what I can do |
+| POST | `/v1/auth/password` | CEO, owner | Change my own password |
+| GET | `/v1/users` | CEO | Every account and the devices signed in to it |
+| POST | `/v1/users` | CEO | Add the owner or a monitor account |
+| PATCH | `/v1/users/:id` | CEO | Rename, switch off or on, set a password |
+| DELETE | `/v1/sessions/:id` | CEO | Sign out a device |
+| GET | `/healthz` | everyone | For the host's uptime check |
+
 ## Run it
 
 Needs Node 22.18 or newer, pnpm, and Postgres 16 with the `psql` command on your PATH.
@@ -88,6 +130,17 @@ pnpm db:reset      # wipes and rebuilds green_star_dev
 ```
 
 Reset only works on a database with `test` or `dev` in its name.
+
+To use the API on your own machine:
+
+```sh
+pnpm --filter @green-star/api create-ceo --name "Your name" --phone "0770 123 4567"   # asks for a password
+pnpm --filter @green-star/api dev                                                       # http://127.0.0.1:4000
+```
+
+`create-ceo` is how the first account is made, and how the CEO gets a new password if he loses his. It runs where the system is hosted, not in the app. Every other account is added by the CEO.
+
+`pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
 ## Posting to the ledger
 
@@ -138,13 +191,18 @@ Result, hand-in and close ids are sent by the caller. The same id twice is one r
 
 Sign convention: a positive line is "goes up" for money held or owed to us. Money owed to the China office is a negative balance.
 
-**For the API.** Every function that touches a customer locks that customer first, before it writes anything, takes several customers in id order, and writes an entry's lines in account order. That removes the usual ways two requests end up waiting on each other. It is not a proof: if Postgres reports a deadlock (`40P01`), nothing was written, and the same request can be sent again with the same id.
+**Who is acting.** The API sets `gs.actor` to the signed-in user at the start of every transaction (`Db.write` in `apps/api/src/db.ts`, the only place it happens). The user id passed to a function must be that same user. By hand, as the app's login: `set gs.actor = '<user id>';` first.
+
+**For the API.** Every function that touches a customer locks that customer first, before it writes anything, takes several customers in id order, and writes an entry's lines in account order. That removes the usual ways two requests end up waiting on each other. It is not a proof: if Postgres reports a deadlock (`40P01`), nothing was written, and the same request can be sent again with the same id. `Db.write` does that by itself, up to three times.
 
 ## Where this differs from the board, and why
 
 - **The rate is stored per 100 dollars, not per dollar.** `145000` is 1,450 per dollar. A market quote such as 152,750 per $100 is 1,527.5 per dollar, which a per-dollar whole number can't hold.
 - **Node 22, not Node 20.** Node 20 is past end of life.
-- **Tests use Node's built-in runner and the `psql` command, not Vitest and Drizzle yet.** The SQL is the source of truth either way. Both come in with the API, and the `psql` requirement goes away then.
+- **No ORM. The API talks to Postgres with plain SQL (`pg`), not Drizzle.** The rules live in the database as functions and views, so the API mostly calls a function or reads a view. A second description of 30 tables in TypeScript would be one more thing to keep in step.
+- **Tests use Node's built-in runner, not Vitest.** It does the job and is one less thing to install. The migration runner and the tests still need the `psql` command; the running API does not.
+- **Sign-in is built here, not with Better Auth.** Better Auth wants an email for every user and brings its own tables and ids. This system has three accounts, signs in with a phone number, and already keeps its rules in Postgres. What is built is small and each part is tested: scrypt hashes (Node's own), random session tokens stored as sha256, and the limits above.
+- **The office monitor signs in with a name, not a phone.** It is a screen, not a person, and has no number of its own.
 - **One ledger entry per customer charge**, not one per file, so a single charge can be reversed.
 - **A consignment can be `cancelled`.** The board has no such status. It is how a wrong amount or a wrong customer is fixed after a file is confirmed.
 - **Weight is stored in grams**, as a whole number, for the same reason money is stored in cents.
@@ -171,6 +229,11 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **The vault's first close is its opening count.** Until the starting balances are loaded the ledger starts at zero, so the first count shows the whole box as a gap, with a note. Nothing else is needed to start.
 - **The ledger's vault can go below zero.** A cash out typed before the hand-in that funded it is not refused. It shows in `vault_status`.
 
+- **A password is at least 10 characters.** No other rules.
+- **A session ends after 14 days without use** for the CEO and the owner, and after 400 days for the office monitor, because nobody is at the screen to sign in again.
+- **Wrong passwords.** 5 for one account from one address, 20 for one account from anywhere, or 30 from one address: wait 15 minutes.
+- **There is one way to add a CEO**, the `create-ceo` command. The app adds only the owner and monitor accounts.
+
 ## Not built yet
 
-Sign-in and roles, the API, the Excel import, the screens, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, starting balances, and the audit log for changes outside the ledger. The columns of `shipment_lines` are provisional until the real China files arrive.
+The rest of the API (customers, files, rounds, money), the Excel import, the screens, the alerts inbox and the scheduled checks (the views they read are here), the weekly wallet check, statements, and starting balances. The audit log covers users so far; the other tables outside the ledger join it with their part of the API. The columns of `shipment_lines` are provisional until the real China files arrive.

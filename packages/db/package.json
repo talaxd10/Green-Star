@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./reset": "./scripts/reset.ts"
   },
   "scripts": {
     "migrate": "node --env-file-if-exists=../../.env scripts/migrate.ts",

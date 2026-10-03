@@ -4,13 +4,22 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { AccountRef, EntryDraft } from "@green-star/domain";
-import { lit, psql, PsqlError, renderPost, requireEnv } from "../src/index.ts";
+import { lit, psql, PsqlError, renderPost, requireEnv, withActor } from "../src/index.ts";
 
 export const OWNER = requireEnv("DATABASE_URL");
 export const APP = requireEnv("APP_DATABASE_URL");
+/** The application's login with nobody acting. */
+export const APP_NO_ACTOR = requireEnv("APP_DATABASE_URL_NO_ACTOR");
+/** The CEO every test acts as. Created by scripts/test.ts. */
 export const USER = "99999999-9999-4999-8999-999999999999";
 
+/** As the application, acting as the test CEO. */
 export const app = (sql: string) => psql(APP, sql);
+/** As the application, acting as someone else. */
+export const appAs = (userId: string) => (sql: string) => psql(withActor(APP_NO_ACTOR, userId), sql);
+/** As the application, with nobody acting. */
+export const appNoActor = (sql: string) => psql(APP_NO_ACTOR, sql);
+/** As the role that owns the schema: migrations, and fixing something by hand. */
 export const owner = (sql: string) => psql(OWNER, sql);
 
 export function post(draft: EntryDraft, happenedAt = new Date("2026-10-02T09:00:00Z"), key: string = randomUUID()): string {
