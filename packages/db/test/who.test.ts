@@ -63,6 +63,10 @@ function everyChange(who: string): Record<string, string> {
   enterResult({ roundId: forgot, consignmentId: unpaid, outcome: "unpaid" });
   app("select gs_sync_alerts();");
   const alert = app(`select id from alerts where kind = 'missed_collection' and subject = ${lit(unpaid)} and status = 'open';`);
+  // A statement made and not yet sent.
+  const statement = randomUUID();
+  const balanceNow = `jsonb_build_object('balanceUsdCents', coalesce((select balance_usd_cents from customer_balances where customer_id = ${lit(customer)}), 0))`;
+  app(`select gs_record_statement(${lit(statement)}, ${lit(customer)}, ${lit(USER)}, null, ${balanceNow}, 'You owe $60.00.');`);
   const u = lit(who);
   return {
     "add a customer": `insert into customers (display_name) values ('Someone');`,
@@ -97,6 +101,8 @@ function everyChange(who: string): Record<string, string> {
     "change a setting": `update settings set wallet_check_days = 7;`,
     "check a wallet": `select gs_check_wallet(${lit(randomUUID())}, 'wallet_fastpay_usd', ${u}, 0, now(), 'read it in the app');`,
     "resolve an alert": `select gs_resolve_alert(${lit(alert)}, ${u}, 'spoke to the driver');`,
+    "make a statement": `select gs_record_statement(${lit(randomUUID())}, ${lit(customer)}, ${u}, null, ${balanceNow}, 'You owe $60.00.');`,
+    "mark a statement sent": `select gs_mark_statement_sent(${lit(statement)}, ${u});`,
     "record a request": `insert into api_requests (key, user_id, method, path, request_hash) values (${lit(randomUUID())}, ${u}, 'POST', '/v1/x', sha256('x'));`,
   };
 }
@@ -150,7 +156,7 @@ test("a row names the CEO who is acting, not another one", () => {
     "change trust", "record a file", "confirm a file", "confirm a prepaid file", "add a user", "open a dispute", "allow an exception",
     "create a round", "put goods on a round", "enter a result with money", "enter a result without money",
     "hand in a round", "attach a receipt", "set the rate", "close the vault", "cancel a consignment",
-    "check a wallet", "resolve an alert",
+    "check a wallet", "resolve an alert", "make a statement", "mark a statement sent",
   ];
   for (const what of named) {
     refusedChange(what, () => appAs(second)(changes[what] as string), /actor_mismatch/);

@@ -20,6 +20,8 @@ export interface Config {
   trustProxy: boolean;
   scrypt: ScryptCost;
   log: boolean;
+  /** A Chromium to draw statements with, instead of the one Playwright installs. */
+  chromiumPath?: string | undefined;
 }
 
 /** What a password costs to check: about a tenth of a second and 32 MB. */
@@ -55,5 +57,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: flag(env.TRUST_PROXY, false),
     scrypt: SCRYPT_COST,
     log: flag(env.LOG, true),
+    chromiumPath: env.CHROMIUM_PATH === undefined || env.CHROMIUM_PATH === "" ? undefined : env.CHROMIUM_PATH,
   };
 }

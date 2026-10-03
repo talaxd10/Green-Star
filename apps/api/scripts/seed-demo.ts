@@ -210,6 +210,11 @@ const { wallets } = await send("GET", "/v1/wallets");
 const fastpay = wallets.find((w: { code: string }) => w.code === "wallet_fastpay_usd");
 await send("POST", "/v1/wallets/checks", { id: randomUUID(), wallet: "wallet_fastpay_usd", appBalance: fastpay.expectedInApp });
 
+// -- Statements: Yaro Trading was sent what it owes. The other trusted customers are still to send.
+const yaroStatement = randomUUID();
+await send("POST", `/v1/customers/${yaro}/statement/export`, { id: yaroStatement });
+await send("POST", `/v1/statements/${yaroStatement}/sent`, {});
+
 const health = await owner.query("select problem, detail from gs_ledger_health()");
 if (health.rows.length > 0) {
   console.error("The demo data left the books unsound:", health.rows);

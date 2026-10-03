@@ -140,9 +140,16 @@ test("the CEO resolves an alert with a note, and it stays resolved while the sam
   app(`select gs_resolve_alert(${lit(id)}, ${lit(USER)}, 'a second note');`);
   assert.equal(field("missed_collection", consignmentId, "note"), "Called him, he pays tomorrow");
 
-  // He pays: it is no longer wrong, and the record of who resolved it stays.
+  // He pays a part. It is still wrong, and what the CEO resolved stays as he resolved it.
   const customer = field("missed_collection", consignmentId, "customer_id");
-  post(officePayment({ customerId: customer, received: usd(6200n) }), DAY);
+  post(officePayment({ customerId: customer, received: usd(1200n) }), DAY);
+  assert.equal(sync(), 0);
+  assert.equal(alertsOf("missed_collection", consignmentId), "resolved/true");
+  assert.match(field("missed_collection", consignmentId, "title"), /\$62\.00 was not collected$/);
+  assert.equal(field("missed_collection", consignmentId, "amount"), "6200");
+
+  // He pays the rest: it is no longer wrong, and the record of who resolved it stays.
+  post(officePayment({ customerId: customer, received: usd(5000n) }), DAY);
   sync();
   assert.equal(alertsOf("missed_collection", consignmentId), "resolved/false");
   assert.equal(field("missed_collection", consignmentId, "note || '|' || (cleared_at is not null)"), "Called him, he pays tomorrow|true");

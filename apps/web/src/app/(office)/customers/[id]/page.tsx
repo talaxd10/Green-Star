@@ -249,6 +249,7 @@ export default function CustomerPage() {
           </span>
         }
       >
+        <LinkButton href={`/customers/${c.id}/statement`}>Statement</LinkButton>
         {canChange ? (
           <>
             <Button tone="quiet" onClick={() => setDialog("merge")}>

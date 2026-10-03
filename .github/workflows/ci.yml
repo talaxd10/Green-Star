@@ -31,4 +31,6 @@ jobs:
       - name: Create local roles
         run: psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c "create role gs_owner login password 'gs_owner' createdb createrole" -c "create role gs_app login password 'gs_app'"
       - run: pnpm typecheck
+      - name: Chromium, to draw statements
+        run: pnpm --filter @green-star/api exec playwright-core install --with-deps chromium
       - run: pnpm test

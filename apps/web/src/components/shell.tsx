@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { href: "/today", label: "Today", icon: icons.today },
   { href: "/alerts", label: "Alerts", icon: icons.alerts, badge: true },
   { href: "/customers", label: "Customers", icon: icons.customers },
+  { href: "/statements", label: "Statements", icon: icons.statements },
   { href: "/files", label: "Files", icon: icons.files },
   { href: "/rounds", label: "Rounds", icon: icons.rounds },
   { href: "/money", label: "Money", icon: icons.money },

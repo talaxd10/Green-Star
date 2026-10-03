@@ -313,6 +313,53 @@ test("a wallet is checked against its app, and a difference becomes an alert", a
   await expect(page.getByText("FIB, dollars: the app shows $5.00 less than the books")).toBeVisible();
 });
 
+test("a trusted customer's statement is made to send, as an image, a PDF and a text, and marked as sent", async () => {
+  await page.getByRole("link", { name: "Statements" }).click();
+  const row = page.getByRole("row", { name: /Dara M\./ });
+  await expect(row).toContainText("$210.00");
+  await expect(row).toContainText("Never");
+  await expect(row).toContainText("To send");
+  await expect(page.getByText("1 to send this week.")).toBeVisible();
+  // Hemn is not trusted, so he is not on the list even though he owes.
+  await expect(page.getByRole("row", { name: /Hemn S\./ })).toHaveCount(0);
+
+  await row.getByRole("link", { name: "Statement" }).click();
+  await expect(page.getByRole("heading", { name: "Dara M." })).toBeVisible();
+  const charge = page.getByRole("row", { name: /File GSSK6931/ }).first();
+  await expect(charge).toContainText("$310.00");
+  const payment = page.getByRole("row", { name: /Cash at the office/ });
+  await expect(payment).toContainText("$100.00");
+  await expect(payment).toContainText("$210.00");
+  await expect(page.getByText("None yet")).toBeVisible();
+
+  await page.getByRole("button", { name: "Make a statement to send" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Statement for Dara M." })).toBeVisible();
+  await expect(dialog.getByLabel("Statement text")).toContainText("You owe $210.00.");
+  await expect(dialog.getByLabel("Statement text")).toContainText("GSSK6931");
+  await expect(dialog.getByLabel("Statement text")).toContainText("Last payment received: $100.00");
+
+  // The image is drawn by the API, twice the size of the page so it stays sharp on a phone.
+  const image = dialog.getByRole("img", { name: "Statement for Dara M." });
+  await expect.poll(() => image.evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0)), { timeout: 30_000 }).toBe(1520);
+  const pdf = await dialog.getByRole("link", { name: "Download the PDF" }).getAttribute("href");
+  const fetched = await page.evaluate(async (url) => {
+    const response = await fetch(url as string);
+    return { status: response.status, type: response.headers.get("content-type"), size: (await response.arrayBuffer()).byteLength };
+  }, pdf);
+  expect(fetched.status).toBe(200);
+  expect(fetched.type).toBe("application/pdf");
+  expect(fetched.size).toBeGreaterThan(5_000);
+
+  await dialog.getByRole("button", { name: "I sent it" }).click();
+  await expect(page.getByText("Marked as sent")).toBeVisible();
+  await expect(page.getByText(/Sent .* by Sarkar/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Statements" }).click();
+  await expect(page.getByRole("row", { name: /Dara M\./ })).toContainText("Sent this week");
+  await expect(page.getByText("Everyone on this list was sent a statement this week.")).toBeVisible();
+});
+
 test("the CEO sets the checks and picks what the office screen shows; the screen shows no money", async () => {
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByLabel("Held in the car, days").fill("0");
@@ -370,6 +417,16 @@ test("the owner is given an account, sees every screen, and can change nothing",
   // He sees the open alert, and cannot resolve it.
   await expect(page.getByText("FIB, dollars: the app shows $5.00 less than the books")).toBeVisible();
   await expect(page.getByRole("button", { name: "Resolve" })).toHaveCount(0);
+
+  // He reads the statement that was sent, and makes none.
+  await page.getByRole("link", { name: "Statements" }).click();
+  await page.getByRole("row", { name: /Dara M\./ }).getByRole("link", { name: "Statement" }).click();
+  await expect(page.getByRole("heading", { name: "Dara M." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Make a statement to send" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open" }).click();
+  await expect(page.getByRole("dialog").getByLabel("Statement text")).toContainText("You owe $210.00.");
+  await expect(page.getByRole("dialog").getByRole("button", { name: "I sent it" })).toHaveCount(0);
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).first().click();
 
   await page.getByRole("link", { name: "Customers" }).click();
   await expect(page.getByRole("heading", { name: "Customers" })).toBeVisible();

@@ -179,6 +179,12 @@ What the API enforces:
 | GET | `/v1/ledger`, `/v1/entries/:id` | CEO, owner | Entries by account and date |
 | GET | `/v1/accounts` | CEO, owner | Every account and what is on it |
 | GET | `/v1/china-account` | CEO, owner | Owed to China vs sent |
+| GET | `/v1/customers/:id/statement` | CEO, owner | Every charge and payment with a running balance. `?from=`, `?corrections=true` |
+| POST | `/v1/customers/:id/statement/export` | CEO | Make the copy to send: an image, a PDF and a text |
+| GET | `/v1/customers/:id/statements` | CEO, owner | The copies made for one customer |
+| GET | `/v1/statements` | CEO, owner | Who to send one to: trusted customers who owe, and when each was last sent one |
+| GET | `/v1/statements/:id`, `/image`, `/pdf` | CEO, owner | One copy as it was made, and its PNG and PDF |
+| POST | `/v1/statements/:id/sent` | CEO | He sent it |
 | GET | `/v1/alerts` | CEO, owner | Open alerts, newest first. `?status=resolved` or `cleared`, `?kind=` |
 | GET | `/v1/alerts/count` | CEO, owner | How many are open, and how many of those are serious |
 | POST | `/v1/alerts/:id/resolve` | CEO | Close an alert with a note |
@@ -228,11 +234,33 @@ What the API enforces:
 1. A save is never lost because a check failed. The checks run inside a savepoint; a failure is undone alone, counted and logged, and `/healthz` answers 503 until the checks next run clean.
 2. The monitor address sends only the chosen widgets, and a test lists every field name it is allowed to send. None is money.
 
+**Statements**
+
+- `packages/db/migrations/0009_statements.sql`: a customer's account line by line with the balance after each, the copies made to send, and the list of who to send one to.
+- `apps/api/src/statement.ts`: the text and the page, made from the one statement. `apps/api/src/render.ts`: draws the page into a PNG and a PDF with a headless Chromium.
+- `apps/api/src/routes/statements.ts`: the addresses.
+
+His second ask: trusted customers are told what they owe. The CEO opens a customer's statement, clicks once, and gets an image, a PDF and a short text to send from his own phone. He marks it as sent, and the Statements screen shows who has not had one this week.
+
+What the database enforces:
+
+1. A statement is read from the ledger and nowhere else: the lines on the customer's account in the order they happened, each with the balance after it. The last line is what he owes.
+2. A mistake and its reversal are left off a statement together, never one without the other, so what is left always adds up to the balance. `?corrections=true` shows both.
+3. A copy made to send is kept exactly as it was drawn. The customer is locked while it is made, and a copy whose balance is not the ledger's at that moment is refused.
+4. A copy is marked as sent once, by the CEO. Nothing else about it changes, by any role, and it is never deleted.
+
+What the API enforces:
+
+1. The image, the PDF and the text are all made from the copy the database kept, so the three cannot say different amounts. The balance is never taken from the request.
+2. A name is drawn as text, never as markup. While the page is drawn, scripts are off and nothing is fetched: its fonts are inside it, including one for Kurdish and Arabic letters.
+3. A copy to send shows the latest 40 lines; older ones are summed into one "balance before" line.
+4. Without Chromium the text is still made, and the image and PDF addresses answer 503 saying why.
+
 **The office screens**
 
 - `apps/web`: the office app. Next.js, for Chrome or Edge on a Windows desktop. English screens; Kurdish and Arabic names are shown exactly as written.
 
-Built so far: sign-in, Today (alerts, the rate, today's rounds, to collect vs collected vs counted in, files in progress), Alerts (open, resolved, went away), Customers, a customer's page, Files, typing a file in, a file's page, Rounds, a new round, a round's page (results, the driver's cash, exceptions), Money (today's rate, payments, cash out, exchange, reversing, the wallet check), Vault close, China account, Settings (accounts, devices, the checks, the office monitor's widgets, drivers, carriers, password), and the office monitor at `/monitor`: full screen, read only, refreshes every 30 seconds.
+Built so far: sign-in, Today (alerts, the rate, today's rounds, to collect vs collected vs counted in, files in progress), Alerts (open, resolved, went away), Customers, a customer's page, his statement (the account with a running balance, and the copy to send), Statements (who to send one to this week), Files, typing a file in, a file's page, Rounds, a new round, a round's page (results, the driver's cash, exceptions), Money (today's rate, payments, cash out, exchange, reversing, the wallet check), Vault close, China account, Settings (accounts, devices, the checks, the office monitor's widgets, drivers, carriers, password), and the office monitor at `/monitor`: full screen, read only, refreshes every 30 seconds.
 
 What the screens enforce:
 
@@ -246,7 +274,7 @@ What the screens enforce:
 8. A session that ended while a screen was open sends the person back to sign in, and then back to where he was.
 9. The monitor account lands on the office screen and is sent back to it from every other address.
 
-`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, the checks and the office screen being set, the owner looking at all of it and changing nothing, and the monitor account reaching its own screen and nothing else.
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks and the office screen being set, the owner looking at all of it and changing nothing, and the monitor account reaching its own screen and nothing else.
 
 ## Run it
 
@@ -285,7 +313,7 @@ The office works without the worker. What it adds are the alerts no save causes:
 
 Sign in as the CEO with `0770 000 0001`, the owner with `0770 000 0002`, or the monitor with `office-tv`. The password for all three is `greenstar-demo`. Open it as `localhost`, not `127.0.0.1`: the API only answers the address it was told the office app is on.
 
-The end-to-end test needs Chromium once: `pnpm --filter @green-star/web exec playwright install chromium`.
+Statements are drawn with Chromium, and so is the end-to-end test. Install it once: `pnpm --filter @green-star/web exec playwright install chromium`. The API finds the same one. `CHROMIUM_PATH` points it at another.
 
 `pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
@@ -366,6 +394,8 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **A vault gap is not posted to the ledger.** The board has no account for it. The gap is kept on the close with its note, and from then on the vault is expected to hold what was counted. `vault_status` shows the ledger, the noted gaps and the expected cash side by side.
 - **A round can be handed in more than once.** The missing part of a short hand-in may arrive the next day, and a transport office sends money in parts.
 - **The rate has a guard the board doesn't mention:** a change of more than 20% has to be confirmed.
+- **A statement is drawn when it is asked for, by the API, and not kept as a file.** The board has the worker export it to file storage. What is kept is the statement itself, as data; the image and the PDF are drawn from it each time, and come out the same. There is no file storage to set up for it, and nothing to go missing.
+- **The weekly statement list is a screen, not a job.** It is worked out when it is opened.
 - **Alerts are worked out, not written by jobs.** The board has one job per check, each run at its own moment. Here one function says what is wrong now, and it is asked after every save and on a timer. A check can't be forgotten at one of its moments, and an alert goes away by itself when it stops being true.
 - **An alert has a third ending the board doesn't list: `cleared`.** The board has open and resolved. A customer who pays after the driver forgot to collect should not leave an alert waiting for a note.
 - **More alerts than the board's table:** a wallet gap, a dinar payment at a rate the day no longer has, and the ledger's own health check.
@@ -390,6 +420,9 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **The vault's first close is its opening count.** Until the starting balances are loaded the ledger starts at zero, so the first count shows the whole box as a gap, with a note. Nothing else is needed to start.
 - **The ledger's vault can go below zero.** A cash out typed before the hand-in that funded it is not refused. It shows in `vault_status`.
 
+- **Statements are in English,** like the screens. A name is shown exactly as it was typed, Kurdish and Arabic included. If customers should get theirs in Kurdish, the text and the page are one file each.
+- **"This week" is seven days** from when the last statement was marked as sent.
+- **A statement shows a customer his files, his payments and the dinar rate each was counted at.** It does not show notes typed in the office.
 - **Money leaving a wallet has no entry on the board.** A wallet account only ever goes up. When he takes cash out of FIB or sends it on, the next wallet check shows a gap, he writes where it went, and the app is expected to show the new balance from then on. This keeps the check honest but the money's path is only in the note. To decide: an entry for "wallet to vault", and whether money to China can leave a wallet.
 - **The wallet check is due 7 days after the oldest money nobody has checked,** not on a fixed weekday. A wallet nobody paid into is never due.
 - **Goods are held too long after 3 days,** and **the vault closes at 18:00.** Both are in Settings.
@@ -404,4 +437,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The Excel import and its screen (`/v1/imports`, waiting on the real China files) and the file check that runs on each import, receipts and photos (`/v1/attachments`, which needs the file storage set up), statements and the weekly list of who to send one to, the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.
+The Excel import and its screen (`/v1/imports`, waiting on the real China files) and the file check that runs on each import, receipts and photos (`/v1/attachments`, which needs the file storage set up), the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.

@@ -19,6 +19,7 @@ import { findSession, SESSION_COOKIE, type Auth } from "./auth/sessions.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError, fromDatabase, invalidRequest, notAllowed, notSignedIn } from "./errors.ts";
+import { Renderer } from "./render.ts";
 import { alertRoutes } from "./routes/alerts.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { customerRoutes } from "./routes/customers.ts";
@@ -26,6 +27,7 @@ import { healthRoutes } from "./routes/health.ts";
 import { moneyRoutes } from "./routes/money.ts";
 import { roundRoutes } from "./routes/rounds.ts";
 import { shipmentRoutes } from "./routes/shipments.ts";
+import { statementRoutes } from "./routes/statements.ts";
 import { userRoutes } from "./routes/users.ts";
 
 declare module "fastify" {
@@ -48,6 +50,8 @@ export interface AppContext {
   decoyHash: string;
   /** The checks that run after every save: how often they failed since the API started, and whether the latest run did. */
   checks: { failed: number; failing: boolean; lastError: string | null };
+  /** Draws statements into images and PDFs. Starts its browser the first time it is asked. */
+  renderer: Renderer;
 }
 
 export interface RouteInfo {
@@ -104,6 +108,10 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
     db,
     decoyHash: await hashPassword("no account has this password", config.scrypt),
     checks: { failed: 0, failing: false, lastError: null },
+    renderer: new Renderer(config.chromiumPath),
+  });
+  app.addHook("onClose", async () => {
+    await app.ctx.renderer.close();
   });
   app.decorate("routeList", []);
   app.decorateRequest("auth", null);
@@ -186,6 +194,7 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
   await app.register(roundRoutes, { prefix: "/v1" });
   await app.register(moneyRoutes, { prefix: "/v1" });
   await app.register(alertRoutes, { prefix: "/v1" });
+  await app.register(statementRoutes, { prefix: "/v1" });
 
   return app;
 }

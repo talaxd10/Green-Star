@@ -242,19 +242,20 @@ test("Today: what the rounds went out to collect, what they took, and what was c
   const dinars = await s.customer(unique("DINARS "));
   const forgot = await s.customer(unique("FORGOT "));
   const held = await s.customer(unique("HELD "));
-  const file = await s.file([[payer, 10_000], [dinars, 5_000], [forgot, 3_000], [held, 2_000]]);
+  const byWallet = await s.customer(unique("WALLET AT THE DOOR "));
+  const file = await s.file([[payer, 10_000], [dinars, 5_000], [forgot, 3_000], [held, 2_000], [byWallet, 4_000]]);
   const c = (customer: string) => file.by[customer] as string;
-  const round = await s.roundOut([c(payer), c(dinars), c(forgot), c(held)]);
+  const round = await s.roundOut([c(payer), c(dinars), c(forgot), c(held), c(byWallet)]);
 
   const out = (await s.get("/v1/reports/today")).body;
-  assert.equal(out.expectedUsdCents - before.expectedUsdCents, 20_000, "everything on the round is still to collect");
+  assert.equal(out.expectedUsdCents - before.expectedUsdCents, 24_000, "everything on the round is still to collect");
   assert.equal(out.collectedUsdCents - before.collectedUsdCents, 0);
   const mine = (report: { rounds: { id: string }[] }) => report.rounds.find((r) => r.id === round) as Record<string, unknown>;
-  assert.deepEqual([mine(out).status, mine(out).stops, mine(out).results], ["out", 4, 0]);
+  assert.deepEqual([mine(out).status, mine(out).stops, mine(out).results], ["out", 5, 0]);
   const inFiles = (report: { files: { id: string }[] }) => report.files.find((f) => f.id === file.id) as Record<string, unknown>;
   assert.deepEqual(
     [inFiles(out).code, inFiles(out).status, inFiles(out).consignments, inFiles(out).notDelivered, inFiles(out).expectedUsdCents, inFiles(out).collectedUsdCents],
-    [file.code, "on_rounds", 4, 4, 20_000, 0],
+    [file.code, "on_rounds", 5, 5, 24_000, 0],
   );
 
   await s.send("PUT", `/v1/rounds/${round}/results`, {
@@ -263,20 +264,23 @@ test("Today: what the rounds went out to collect, what they took, and what was c
       result(c(dinars), "paid", { amount: 72_500, currency: "IQD" }),
       result(c(forgot), "unpaid"),
       result(c(held), "held"),
+      result(c(byWallet), "paid", { amount: 4_000, currency: "USD" }, "fastpay"),
     ],
   });
+  const officeBefore = before.officePaymentsUsdCents;
   const back = (await s.get("/v1/reports/today")).body;
   const cash = (report: { cash: { currency: string }[] }, currency: string) => report.cash.find((x) => x.currency === currency) as unknown as { collected: number; counted: number; gap: number };
-  assert.equal(back.expectedUsdCents - before.expectedUsdCents, 20_000, "what was due does not change when some of it is paid");
-  assert.equal(back.collectedUsdCents - before.collectedUsdCents, 15_000);
-  assert.equal(cash(back, "USD").collected - cash(before, "USD").collected, 10_000);
+  assert.equal(back.expectedUsdCents - before.expectedUsdCents, 24_000, "what was due does not change when some of it is paid");
+  assert.equal(back.collectedUsdCents - before.collectedUsdCents, 19_000, "cash and the wallet at the door");
+  assert.equal(back.officePaymentsUsdCents, officeBefore, "a wallet at the door is the round collecting, not the office");
+  assert.equal(cash(back, "USD").collected - cash(before, "USD").collected, 10_000, "the wallet money is not cash to count in");
   assert.equal(cash(back, "IQD").collected - cash(before, "IQD").collected, 72_500);
   assert.equal(cash(back, "USD").counted - cash(before, "USD").counted, 0);
   assert.equal(cash(back, "USD").gap - cash(before, "USD").gap, 10_000, "the cash is still with the driver");
   assert.equal(back.heldInCar - before.heldInCar, 1);
   assert.equal(back.alerts.open - before.alerts.open, 1, "the one he forgot to collect");
-  assert.deepEqual([mine(back).status, mine(back).results, mine(back).missedCollections], ["returned", 4, 1]);
-  assert.deepEqual([inFiles(back).notDelivered, inFiles(back).deliveredNotPaid, inFiles(back).collectedUsdCents], [1, 1, 15_000]);
+  assert.deepEqual([mine(back).status, mine(back).results, mine(back).missedCollections], ["returned", 5, 1]);
+  assert.deepEqual([inFiles(back).notDelivered, inFiles(back).deliveredNotPaid, inFiles(back).collectedUsdCents], [1, 1, 19_000]);
 
   // Counted in, $20 short.
   const handed = await s.send("POST", `/v1/rounds/${round}/hand-in`, {
@@ -292,8 +296,7 @@ test("Today: what the rounds went out to collect, what they took, and what was c
   const gap = (await alerts("open", "&kind=round_cash_gap")).filter((x) => x.roundId === round);
   assert.deepEqual(gap.map((x) => [x.amount, x.currency, x.severity]), [[2_000, "USD", "high"]]);
 
-  // Money paid at the office is its own line, and a wallet at the door is not office money.
-  const officeBefore = counted.officePaymentsUsdCents;
+  // Money paid at the office is its own line.
   await s.send("POST", "/v1/payments", { customerId: forgot, received: { amount: 1_000, currency: "USD" }, method: "office_cash" });
   await s.send("POST", "/v1/payments", { customerId: forgot, received: { amount: 14_500, currency: "IQD" }, method: "fib" });
   const paid = (await s.get("/v1/reports/today")).body;
