@@ -395,6 +395,144 @@ test("the CEO sets the checks, and signs out a device he no longer uses", async 
   await other.close();
 });
 
+/** Sets a scene through the API, the way the screens do, for the steps that are about one thing only. */
+async function send<T = { id: string }>(method: string, url: string, body: unknown = {}): Promise<T> {
+  return page.evaluate(
+    async ({ method, url, body }) => {
+      const reply = await fetch(url, { method, headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify(body) });
+      if (!reply.ok) throw new Error(`${method} ${url}: ${reply.status} ${await reply.text()}`);
+      return reply.json();
+    },
+    { method, url, body },
+  );
+}
+
+/** A customer who owes this much on one confirmed file. */
+async function owing(name: string, cents: number, code: string): Promise<{ customerId: string; consignmentId: string }> {
+  const customer = await send("POST", "/v1/customers", { name });
+  const file = await send<{ id: string; consignmentList: { id: string }[] }>("POST", "/v1/shipments", { code, consignments: [{ customerId: customer.id, amountDueUsdCents: cents }] });
+  await send("POST", `/v1/shipments/${file.id}/confirm`);
+  return { customerId: customer.id, consignmentId: (file.consignmentList[0] as { id: string }).id };
+}
+
+test("a customer pays in dollars and dinars together, and the rounded dinars settle what he owes", async () => {
+  const { customerId } = await owing("Mixed Payer", 53_300, "GSSK7001");
+  await page.goto(`/money?customer=${customerId}`);
+  await expect(page.getByText("He owes $533.00. It pays his oldest unpaid file first.")).toBeVisible();
+
+  // $400 in dollars. The rest, $133, is 192,850 dinars at 1,450: he hands over 193,000.
+  await page.getByLabel("Amount received").fill("400");
+  await page.getByRole("button", { name: "+ He also paid another way" }).click();
+  const second = page.locator('[data-part="2"]');
+  await expect(second.getByLabel("Currency")).toHaveValue("IQD");
+  await expect(second).toContainText("What is left is 192,850 IQD.");
+  await second.getByRole("button", { name: "Use 193,000 IQD" }).click();
+  await expect(second.getByLabel("And")).toHaveValue("193000");
+  await expect(second).toContainText("counts as $133.00: it settles what he owes. Exactly, it is $133.10 at 1,450.");
+  await expect(page.getByTestId("payment-total")).toHaveText("Together $533.00. He will owe nothing.");
+
+  // Two rows the same way are one payment.
+  await second.getByLabel("Currency").selectOption("USD");
+  await expect(page.getByText("Two of these are in the same currency and paid the same way.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Take the payment" })).toBeDisabled();
+  await second.getByLabel("Currency").selectOption("IQD");
+
+  await page.getByRole("button", { name: "Take the payment" }).click();
+  await expect(page.getByText("$533.00 taken from Mixed Payer")).toBeVisible();
+  const rows = page.getByRole("row", { name: /Mixed Payer/ });
+  await expect(rows).toHaveCount(2);
+  await expect(rows.filter({ hasText: "193,000 IQD" })).toContainText("$133.00");
+  await expect(rows.filter({ hasText: "$400.00" })).toHaveCount(1);
+
+  await page.goto(`/customers/${customerId}/statement`);
+  await expect(page.getByText("He owes", { exact: true }).locator("..")).toContainText("$0.00");
+});
+
+test("a few dollars nobody will chase are taken off with an Error entry, up to the limit in Settings", async () => {
+  const { customerId } = await owing("Error Payer", 10_000, "GSSK7002");
+  await page.goto(`/money?customer=${customerId}`);
+  await page.getByRole("radio", { name: "Error" }).click();
+  await expect(page.getByText("He owes $100.00.")).toBeVisible();
+  await expect(page.getByText("At most $5.00 at a time.")).toBeVisible();
+
+  await page.getByLabel("Amount to take off, in dollars").fill("7");
+  await expect(page.getByText("At most $5.00. The limit is in Settings.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enter the error" })).toBeDisabled();
+  await page.getByLabel("Amount to take off, in dollars").fill("4.50");
+  await page.getByLabel("Note").fill("Short at the door");
+  await page.getByRole("button", { name: "Enter the error" }).click();
+  await expect(page.getByText("$4.50 taken off Error Payer's account")).toBeVisible();
+
+  const listed = page.locator("section").filter({ has: page.getByRole("heading", { name: "Latest errors" }) }).getByRole("row", { name: /Error Payer/ });
+  await expect(listed).toContainText("$4.50");
+  await expect(listed).toContainText("Short at the door");
+  // No money came in: it is not on the list of payments.
+  await expect(page.locator("section").filter({ has: page.getByRole("heading", { name: "Latest payments" }) }).getByRole("row", { name: /Error Payer/ })).toHaveCount(0);
+
+  // His limit is his own to change.
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByLabel("Round dinars to the nearest")).toHaveValue("1000");
+  await page.getByLabel("An Error entry is at most, in dollars").fill("10");
+  await page.getByRole("button", { name: "Save the money rules" }).click();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+
+  await page.goto(`/money?customer=${customerId}`);
+  await page.getByRole("radio", { name: "Error" }).click();
+  await expect(page.getByText("He owes $95.50.")).toBeVisible();
+  await page.getByLabel("Amount to take off, in dollars").fill("7");
+  await page.getByRole("button", { name: "Enter the error" }).click();
+  await expect(page.getByText("$7.00 taken off Error Payer's account")).toBeVisible();
+
+  // Taken back like any other entry.
+  await listed.filter({ hasText: "$7.00" }).getByRole("button", { name: "Reverse" }).click();
+  await page.getByRole("dialog").getByLabel("Why").fill("He paid it after all");
+  await page.getByRole("dialog").getByRole("button", { name: "Reverse it" }).click();
+  await expect(listed.filter({ hasText: "$7.00" })).toContainText("reversed");
+
+  await page.goto(`/customers/${customerId}/statement`);
+  await expect(page.getByText("He owes", { exact: true }).locator("..")).toContainText("$95.50");
+  await expect(page.getByRole("row", { name: /Error/ }).first()).toContainText("$4.50");
+});
+
+test("at the door a customer pays the driver in dollars and dinars, and the driver holds both", async () => {
+  const { consignmentId } = await owing("Door Payer", 53_300, "GSSK7003");
+  const driver = await send("POST", "/v1/drivers", { name: "Bestun" });
+  const round = await send<{ id: string; number: number }>("POST", "/v1/rounds", { driverId: driver.id, stops: [{ consignmentId }] });
+  await send("POST", `/v1/rounds/${round.id}/depart`);
+
+  await page.goto(`/rounds/${round.id}`);
+  await page.getByLabel("Outcome for Door Payer").selectOption("paid");
+  await page.getByLabel("Amount received from Door Payer").fill("400");
+  await page.getByRole("button", { name: "Door Payer also paid another way" }).click();
+  // Not ready to save while the second amount is empty.
+  await expect(page.getByText("Enter the other amount, or remove the empty row.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save the results" })).toBeDisabled();
+  await page.getByLabel("Payment 2 from Door Payer").fill("193,000");
+  await expect(page.getByLabel("Currency of payment 2")).toHaveValue("IQD");
+  await expect(page.getByText("193,000 IQD → counts as $133.00: it settles what is left")).toBeVisible();
+  await expect(page.getByText("Together $533.00, paid in full")).toBeVisible();
+
+  await page.getByRole("button", { name: "Save the results" }).click();
+  await expect(page.getByText("Back, cash not counted")).toBeVisible();
+  await expect(page.getByText("Cash on the receipts: $400.00 · 193,000 IQD")).toBeVisible();
+  await expect(page.getByText("193,000 IQD → $133.00 at 1,450")).toBeVisible();
+  await expect(page.getByLabel("Amount received from Door Payer")).toHaveValue("400.00");
+  await expect(page.getByLabel("Payment 2 from Door Payer")).toHaveValue("193000");
+  await expect(page.getByText("The driver forgot to collect.")).toHaveCount(0);
+
+  // He hands in the dollars and the dinars, and the round is done.
+  await page.locator("#USD-10000").fill("4");
+  await page.locator("#IQD-50000").fill("3");
+  await page.locator("#IQD-25000").fill("1");
+  await page.locator("#IQD-10000").fill("1");
+  await page.locator("#IQD-5000").fill("1");
+  await page.locator("#IQD-1000").fill("3");
+  await expect(page.getByText("Matches")).toHaveCount(2);
+  await page.getByRole("button", { name: "Count it into the vault" }).click();
+  await expect(page.getByText("All the cash on the receipts is counted in.")).toBeVisible();
+  await expect(page.getByText("Counted in: $400.00 · 193,000 IQD")).toBeVisible();
+});
+
 test("signed out, nothing opens: every screen asks him to sign in, and the API answers nobody", async () => {
   // The office screen is gone, whoever asks for it.
   await page.goto("/monitor");

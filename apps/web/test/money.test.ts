@@ -12,6 +12,8 @@ import {
   iqdToUsdCents,
   parseAmount,
   parseRate,
+  planParts,
+  roundDinars,
   usdCentsToIqd,
 } from "../src/lib/money.ts";
 
@@ -118,4 +120,30 @@ test("a count of notes adds up", () => {
   assert.equal(countNotes({ 10000: 3, 5000: 1 }), 35000);
   assert.equal(countNotes({ 25000: 4, 10000: 2, 1000: 3, 250: 1 }), 123250);
   assert.equal(countNotes({}), 0);
+});
+
+test("what a payment in parts will do is shown before it is saved, in the order the parts were typed", () => {
+  // The CEO's example: he owes $533, pays 209,000 IQD and $400. Typed dinars first.
+  const plan = planParts([{ amount: 209000, currency: "IQD" }, { amount: 40000, currency: "USD" }], { iqdPer100Usd: 157000, owedUsdCents: 53300, stepIqd: 1000 });
+  assert.deepEqual(plan, { credited: [13300, 40000], exact: [13312, 40000], total: 53300, left: 0 });
+
+  // Not rounded: a part payment, and with rounding switched off.
+  assert.deepEqual(planParts([{ amount: 150000, currency: "IQD" }], { iqdPer100Usd: 157000, owedUsdCents: 53300, stepIqd: 1000 }), { credited: [9554], exact: [9554], total: 9554, left: 43746 });
+  assert.equal(planParts([{ amount: 209000, currency: "IQD" }], { iqdPer100Usd: 157000, owedUsdCents: 13300, stepIqd: 0 })?.left, -12);
+  // For one consignment while he owes more.
+  assert.deepEqual(planParts([{ amount: 97000, currency: "IQD" }], { iqdPer100Usd: 157000, owedUsdCents: 16200, owedForConsignmentUsdCents: 6200, stepIqd: 1000 })?.credited, [6200]);
+
+  // Nothing to show yet: no parts, an empty amount, or dinars with no rate today.
+  assert.equal(planParts([], { iqdPer100Usd: 157000, owedUsdCents: 100, stepIqd: 1000 }), null);
+  assert.equal(planParts([{ amount: 0, currency: "USD" }], { iqdPer100Usd: 157000, owedUsdCents: 100, stepIqd: 1000 }), null);
+  assert.equal(planParts([{ amount: 1000, currency: "IQD" }], { iqdPer100Usd: null, owedUsdCents: 100, stepIqd: 1000 }), null);
+  assert.deepEqual(planParts([{ amount: 100, currency: "USD" }], { iqdPer100Usd: null, owedUsdCents: 100, stepIqd: 1000 })?.left, 0, "dollars need no rate");
+});
+
+test("dinars are rounded to the step in Settings", () => {
+  assert.equal(roundDinars(208810, 1000), 209000);
+  assert.equal(roundDinars(192850, 1000), 193000);
+  assert.equal(roundDinars(192499, 1000), 192000);
+  assert.equal(roundDinars(192850, 250), 192750);
+  assert.equal(roundDinars(192850, 0), 192850);
 });

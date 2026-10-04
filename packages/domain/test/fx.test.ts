@@ -4,10 +4,13 @@ import {
   baghdadDay,
   baghdadDayStart,
   conversionAgrees,
+  dinarCredit,
+  dinarsSettle,
   impliedRate,
   isRateJump,
   iqdToUsdCents,
   rateFromPerDollar,
+  roundDinars,
   usdCentsToIqd,
 } from "../src/index.ts";
 
@@ -43,6 +46,88 @@ test("conversionAgrees accepts the rounded value and nothing else", () => {
       assert.ok(!conversionAgrees(dinars, cents - 2n, rate), `${dinars} at ${rate} -2`);
     }
   }
+});
+
+test("the CEO's example: $133 at 1,570 is 208,810 IQD, he takes 209,000, and it counts as $133", () => {
+  const rate = rateFromPerDollar(1570);
+  assert.equal(usdCentsToIqd(13300n, rate), 208810n);
+  assert.equal(roundDinars(208810n), 209000n);
+  assert.equal(iqdToUsdCents(209000n, rate), 13312n, "exactly, 209,000 is $133.12");
+  assert.ok(dinarsSettle(209000n, rate, 13300n));
+  assert.equal(dinarCredit(209000n, rate, [13300n]), 13300n);
+});
+
+test("normal rounding: to the nearest 1,000, and half a step goes up", () => {
+  const cases: [bigint, bigint][] = [
+    [208810n, 209000n], [208499n, 208000n], [208500n, 209000n], [208000n, 208000n], [499n, 0n], [500n, 1000n], [0n, 0n],
+  ];
+  for (const [dinars, rounded] of cases) assert.equal(roundDinars(dinars), rounded, String(dinars));
+  assert.equal(roundDinars(208810n, 250n), 208750n);
+  assert.equal(roundDinars(208875n, 250n), 209000n);
+  assert.equal(roundDinars(208810n, 0n), 208810n, "a step of 0 switches rounding off");
+  assert.equal(roundDinars(-208810n), -209000n);
+  assert.throws(() => roundDinars(1000n, -1n), RangeError);
+});
+
+test("dinars settle what is owed give or take half a step, and not a dinar further", () => {
+  const rate = 157000;                       // $133.00 is 208,810 IQD
+  for (const dinars of [208310n, 208500n, 208810n, 209000n, 209310n]) assert.ok(dinarsSettle(dinars, rate, 13300n), String(dinars));
+  for (const dinars of [208309n, 208000n, 209311n, 210000n, 1n]) assert.ok(!dinarsSettle(dinars, rate, 13300n), String(dinars));
+  // The step is the one from Settings.
+  assert.ok(dinarsSettle(208700n, rate, 13300n, 250n));
+  assert.ok(!dinarsSettle(208500n, rate, 13300n, 250n));
+  // Switched off, only the exact amount settles, and that needs no rounding.
+  assert.ok(dinarsSettle(208810n, rate, 13300n, 0n));
+  assert.ok(!dinarsSettle(208811n, rate, 13300n, 0n));
+  // A customer who owes nothing, or is in credit, is never "settled".
+  assert.ok(!dinarsSettle(300n, rate, 0n));
+  assert.ok(!dinarsSettle(300n, rate, -13300n));
+  assert.throws(() => dinarsSettle(1000n, rate, 100n, -1n), RangeError);
+});
+
+test("a dinar payment is worth what it settles, and otherwise exactly what it converts to", () => {
+  const rate = 147000;                       // the README's case: $62.00 is 91,140 IQD
+  assert.equal(dinarCredit(91000n, rate, [6200n]), 6200n, "140 dinars short still settles $62.00");
+  assert.equal(dinarCredit(91250n, rate, [6200n]), 6200n, "110 dinars over settles it, with no credit left");
+  assert.equal(dinarCredit(90000n, rate, [6200n]), 6122n, "a part payment is exact");
+  assert.equal(dinarCredit(100000n, rate, [6200n]), 6803n, "an overpayment is exact, and the rest is his credit");
+  // The consignment the money is for is tried first, then everything he owes.
+  assert.equal(dinarCredit(91000n, rate, [6200n, 16200n]), 6200n);
+  assert.equal(dinarCredit(238000n, rate, [6200n, 16200n]), 16200n);   // $162.00 is 238,140 IQD
+  assert.equal(dinarCredit(150000n, rate, [6200n, 16200n]), 10204n);
+  assert.equal(dinarCredit(91000n, rate, []), 6190n);
+  assert.equal(dinarCredit(91000n, rate, [6200n], 0n), 6190n, "rounding switched off");
+});
+
+test("a rounded payment never moves the account by more than half a step's worth", () => {
+  let seed = 7;
+  const next = (max: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return (seed >>> 12) % max;
+  };
+  let settled = 0;
+  let exact = 0;
+  for (let run = 0; run < 5000; run += 1) {
+    const rate = 130000 + next(30000);
+    const owed = BigInt(1 + next(300000));
+    const exactly = usdCentsToIqd(owed, rate);
+    // Around what he owes half the time, anywhere the other half.
+    const dinars = run % 2 === 0 ? exactly - 800n + BigInt(next(1600)) : BigInt(250 * (1 + next(4000)));
+    if (dinars <= 0n) continue;
+    const credit = dinarCredit(dinars, rate, [owed]);
+    const worth = iqdToUsdCents(dinars, rate);
+    if (credit === worth) {
+      exact += 1;
+      continue;
+    }
+    settled += 1;
+    assert.equal(credit, owed);
+    // Half a step is 500 dinars: at these rates never more than 39 cents.
+    const off = credit > worth ? credit - worth : worth - credit;
+    assert.ok(off * BigInt(rate) <= 500n * 10000n + BigInt(rate), `${dinars} at ${rate} for ${owed}: off by ${off}`);
+    assert.ok(off <= 39n);
+  }
+  assert.ok(settled > 500 && exact > 500, `${settled} settled, ${exact} exact`);
 });
 
 test("impliedRate recovers the rate of an exchange", () => {

@@ -4,7 +4,7 @@
 // A positive amount is "goes up" for money held or owed to us; a negative
 // amount is "goes down". Money owed to the China office is a negative balance.
 
-import { iqdToUsdCents, assertRate, impliedRate } from "./fx.ts";
+import { iqdToUsdCents, assertRate, dinarsSettle, impliedRate } from "./fx.ts";
 import type { Currency, Money } from "./money.ts";
 
 export type EntryKind =
@@ -15,7 +15,8 @@ export type EntryKind =
   | "wallet_payment"
   | "sent_to_china"
   | "cash_out"
-  | "currency_exchange";
+  | "currency_exchange"
+  | "error_correction";
 
 export type Wallet = "fib" | "fastpay" | "zaincash";
 
@@ -67,6 +68,10 @@ export const account = {
     code: `exchange_clearing_${lower(currency)}`,
   }),
   chinaPayable: (): AccountRef => ({ type: "system", code: "china_payable" }),
+  /** What dinar rounding gave and took. */
+  dinarRounding: (): AccountRef => ({ type: "system", code: "dinar_rounding_usd" }),
+  /** What the CEO wrote off as an error. */
+  errors: (): AccountRef => ({ type: "system", code: "errors_usd" }),
   customer: (customerId: string): AccountRef => ({ type: "customer", customerId }),
   driverCash: (roundId: string, currency: Currency): AccountRef => ({ type: "driver_cash", roundId, currency }),
 };
@@ -101,11 +106,24 @@ function draft(kind: EntryKind, lines: DraftLine[], extra: { ratePer100?: number
   return { kind, lines, ...extra };
 }
 
+/** How dinars are rounded when a payment is taken. Left out, a payment is worth exactly what it converts to. */
+export interface Rounding {
+  /**
+   * What the customer is credited: the amount owed that these dinars settle.
+   * It must be within half a rounding step of the dinars received.
+   */
+  creditUsdCents: bigint;
+  /** The rounding step from Settings, in dinars. 1,000 when left out. */
+  stepIqd?: bigint;
+}
+
 /**
  * Money arriving for a customer. In dollars it goes straight to the account.
  * In dinars it passes through the exchange clearing accounts at the day's
  * rate, so that each currency still balances and the customer is credited in
- * dollars.
+ * dollars. When the dinars settle what he owes, give or take half a rounding
+ * step, he is credited what he owes and the difference goes to the rounding
+ * account.
  */
 function customerPayment(
   kind: EntryKind,
@@ -113,11 +131,15 @@ function customerPayment(
   customerId: string,
   received: Money,
   ratePer100: number | undefined,
+  rounding?: Rounding,
 ): EntryDraft {
   positive(received.amount, "the amount received");
   const customer = account.customer(customerId);
 
   if (received.currency === "USD") {
+    if (rounding !== undefined && rounding.creditUsdCents !== received.amount) {
+      throw new Error("rounding_invalid: only a payment in dinars is rounded");
+    }
     return draft(kind, [
       { account: into("USD"), currency: "USD", amount: received.amount },
       { account: customer, currency: "USD", amount: -received.amount },
@@ -130,16 +152,19 @@ function customerPayment(
   assertRate(ratePer100);
   const cents = iqdToUsdCents(received.amount, ratePer100);
   positive(cents, "the dollar value of the dinars received");
-  return draft(
-    kind,
-    [
-      { account: into("IQD"), currency: "IQD", amount: received.amount },
-      { account: account.exchangeClearing("IQD"), currency: "IQD", amount: -received.amount },
-      { account: account.exchangeClearing("USD"), currency: "USD", amount: cents },
-      { account: customer, currency: "USD", amount: -cents },
-    ],
-    { ratePer100 },
-  );
+  const credit = rounding?.creditUsdCents ?? cents;
+  if (credit !== cents && !dinarsSettle(received.amount, ratePer100, credit, rounding?.stepIqd)) {
+    throw new Error(`rounding_too_large: ${received.amount} IQD is not ${credit} cents at ${ratePer100}, even rounded`);
+  }
+  const lines: DraftLine[] = [
+    { account: into("IQD"), currency: "IQD", amount: received.amount },
+    { account: account.exchangeClearing("IQD"), currency: "IQD", amount: -received.amount },
+    { account: account.exchangeClearing("USD"), currency: "USD", amount: cents },
+    { account: customer, currency: "USD", amount: -credit },
+  ];
+  // Negative when his dinars were worth more than he owed: rounding gave.
+  if (credit !== cents) lines.push({ account: account.dinarRounding(), currency: "USD", amount: credit - cents });
+  return draft(kind, lines, { ratePer100 });
 }
 
 /**
@@ -166,6 +191,7 @@ export function driverCollected(input: {
   customerId: string;
   received: Money;
   ratePer100?: number;
+  rounding?: Rounding;
 }): EntryDraft {
   return customerPayment(
     "driver_collected",
@@ -173,12 +199,13 @@ export function driverCollected(input: {
     input.customerId,
     input.received,
     input.ratePer100,
+    input.rounding,
   );
 }
 
 /** A customer paid cash at the office. */
-export function officePayment(input: { customerId: string; received: Money; ratePer100?: number }): EntryDraft {
-  return customerPayment("office_payment", account.vault, input.customerId, input.received, input.ratePer100);
+export function officePayment(input: { customerId: string; received: Money; ratePer100?: number; rounding?: Rounding }): EntryDraft {
+  return customerPayment("office_payment", account.vault, input.customerId, input.received, input.ratePer100, input.rounding);
 }
 
 /** A customer paid through FIB, FastPay or ZainCash. */
@@ -187,6 +214,7 @@ export function walletPayment(input: {
   wallet: Wallet;
   received: Money;
   ratePer100?: number;
+  rounding?: Rounding;
 }): EntryDraft {
   return customerPayment(
     "wallet_payment",
@@ -194,6 +222,25 @@ export function walletPayment(input: {
     input.customerId,
     input.received,
     input.ratePer100,
+    input.rounding,
+  );
+}
+
+/**
+ * The CEO's "Error" entry: a small amount taken off what one customer owes,
+ * with no money arriving. The database holds it to the limit in Settings and
+ * to what he owes.
+ */
+export function errorCorrection(input: { customerId: string; amountUsdCents: bigint; reason?: string }): EntryDraft {
+  positive(input.amountUsdCents, "the amount of an Error entry");
+  const reason = input.reason?.trim();
+  return draft(
+    "error_correction",
+    [
+      { account: account.errors(), currency: "USD", amount: input.amountUsdCents },
+      { account: account.customer(input.customerId), currency: "USD", amount: -input.amountUsdCents },
+    ],
+    reason ? { reason } : {},
   );
 }
 

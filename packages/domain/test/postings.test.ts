@@ -6,6 +6,7 @@ import {
   currencyExchange,
   currencyExchangeToDinars,
   driverCollected,
+  errorCorrection,
   fileConfirmed,
   iqd,
   officePayment,
@@ -48,6 +49,53 @@ test("the board's round: Rebwar pays 123,250 IQD for $85.00 at 1,450", () => {
   assert.equal(customerLine.amount, -8500n);
   const driverLine = entry.lines.find((l) => l.account.type === "driver_cash")!;
   assert.deepEqual([driverLine.currency, driverLine.amount], ["IQD", 123250n]);
+});
+
+test("the CEO's example: 209,000 IQD settles $133.00, and the 12 cents are on the rounding account", () => {
+  const draft = officePayment({ customerId, received: iqd(209000n), ratePer100: 157000, rounding: { creditUsdCents: 13300n } });
+  assertBalanced(draft.lines);
+  assert.equal(draft.ratePer100, 157000);
+  const by = (code: string) => draft.lines.filter((l) => l.account.type === "system" && l.account.code === code).map((l) => l.amount);
+  assert.deepEqual(by("vault_iqd"), [209000n]);
+  assert.deepEqual(by("exchange_clearing_iqd"), [-209000n]);
+  assert.deepEqual(by("exchange_clearing_usd"), [13312n], "the dinars pass through at exactly what they are worth");
+  assert.deepEqual(by("dinar_rounding_usd"), [-12n], "rounding gave 12 cents");
+  assert.deepEqual(draft.lines.filter((l) => l.account.type === "customer").map((l) => l.amount), [-13300n]);
+
+  // 500 dinars short of $133.00 settles it too, and rounding took 32 cents.
+  const short = driverCollected({ roundId, customerId, received: iqd(208310n), ratePer100: 157000, rounding: { creditUsdCents: 13300n } });
+  assertBalanced(short.lines);
+  assert.deepEqual(short.lines.filter((l) => l.account.type === "system" && l.account.code === "dinar_rounding_usd").map((l) => l.amount), [32n]);
+});
+
+test("a payment is rounded only in dinars and only within half a step", () => {
+  // No rounding asked for, or the credit is what the dinars are worth anyway: no rounding line.
+  for (const draft of [
+    officePayment({ customerId, received: iqd(209000n), ratePer100: 157000 }),
+    officePayment({ customerId, received: iqd(209000n), ratePer100: 157000, rounding: { creditUsdCents: 13312n } }),
+    walletPayment({ customerId, wallet: "fib", received: usd(13300n), rounding: { creditUsdCents: 13300n } }),
+  ]) {
+    assert.ok(!draft.lines.some((l) => l.account.type === "system" && l.account.code === "dinar_rounding_usd"));
+  }
+  assert.throws(() => officePayment({ customerId, received: iqd(208000n), ratePer100: 157000, rounding: { creditUsdCents: 13300n } }), /rounding_too_large/);
+  assert.throws(() => officePayment({ customerId, received: iqd(209000n), ratePer100: 157000, rounding: { creditUsdCents: 13300n, stepIqd: 250n } }), /rounding_too_large/);
+  assert.throws(() => officePayment({ customerId, received: iqd(209000n), ratePer100: 157000, rounding: { creditUsdCents: 0n } }), /rounding_too_large/);
+  assert.throws(() => officePayment({ customerId, received: usd(13312n), rounding: { creditUsdCents: 13300n } }), /rounding_invalid/);
+});
+
+test("an Error entry takes an amount off what the customer owes, with no money arriving", () => {
+  const draft = errorCorrection({ customerId, amountUsdCents: 500n, reason: "  short at the door " });
+  assertBalanced(draft.lines);
+  assert.equal(draft.kind, "error_correction");
+  assert.equal(draft.reason, "short at the door");
+  assert.deepEqual(
+    draft.lines.map((l) => [l.account.type === "system" ? l.account.code : l.account.type, l.amount]),
+    [["errors_usd", 500n], ["customer", -500n]],
+  );
+  assert.equal(errorCorrection({ customerId, amountUsdCents: 1n }).reason, undefined);
+  assert.equal(errorCorrection({ customerId, amountUsdCents: 1n, reason: "   " }).reason, undefined);
+  assert.throws(() => errorCorrection({ customerId, amountUsdCents: 0n }), RangeError);
+  assert.throws(() => errorCorrection({ customerId, amountUsdCents: -500n }), RangeError);
 });
 
 test("a dollar payment needs no rate and no conversion", () => {

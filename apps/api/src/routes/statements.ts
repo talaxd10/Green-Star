@@ -59,7 +59,7 @@ const toLine = (row: StatementRow): StatementLine => ({
   entryId: row.entry_id,
   day: row.day,
   happenedAt: row.happened_at.toISOString(),
-  kind: row.what === "file_confirmed" ? "charge" : "payment",
+  kind: row.what === "file_confirmed" ? "charge" : row.what === "error_correction" ? "correction" : "payment",
   isReversal: row.is_reversal,
   isCorrection: row.is_correction,
   changeUsdCents: row.change_usd_cents,
@@ -113,7 +113,8 @@ async function buildStatement(q: Queryable, customerId: string, options: Stateme
      order by confirmed_at, created_at, consignment_id`,
     [customerId],
   );
-  const lastPayment = [...rows].reverse().find((row) => row.change_usd_cents < 0 && !row.is_correction);
+  // The last money that came in: not something taken back, and not an Error entry.
+  const lastPayment = [...rows].reverse().find((row) => row.change_usd_cents < 0 && !row.is_correction && row.what !== "error_correction");
 
   return {
     customerId,

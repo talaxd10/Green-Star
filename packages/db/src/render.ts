@@ -25,6 +25,8 @@ export interface PostOptions {
   happenedAt: Date;
   createdBy: string;
   idempotencyKey: string;
+  /** The consignment a payment is for. It is paid before the customer's older ones. */
+  forConsignment?: string;
 }
 
 /** A single `select gs_post_entry(...)` statement for this draft. */
@@ -43,7 +45,9 @@ export function renderPost(draft: EntryDraft, options: PostOptions): string {
     `  ${lit(options.idempotencyKey)},`,
     `  jsonb_build_array(\n    ${lines}\n  ),`,
     `  ${draft.reason === undefined ? "null" : lit(draft.reason)},`,
-    `  ${draft.ratePer100 === undefined ? "null" : String(draft.ratePer100)}`,
+    `  ${draft.ratePer100 === undefined ? "null" : String(draft.ratePer100)},`,
+    "  null,",
+    `  ${options.forConsignment === undefined ? "null" : uuid(options.forConsignment)}`,
     ");",
   ].join("\n");
 }

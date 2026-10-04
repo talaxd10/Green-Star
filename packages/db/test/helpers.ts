@@ -162,6 +162,8 @@ export interface ResultInput {
   consignmentId: string;
   outcome: Outcome;
   received?: { amount: bigint | number; currency: "USD" | "IQD"; method?: Method };
+  /** The rest of what he handed over, when he paid in more than one way. */
+  more?: readonly { amount: bigint | number; currency: string; method?: string }[];
   at?: Date;
   id?: string;
 }
@@ -171,7 +173,11 @@ export function resultSql(input: ResultInput): string {
   const money = input.received
     ? `${input.received.amount}, ${lit(input.received.currency)}, ${lit(input.received.method ?? "driver_cash")}`
     : "null, null, null";
-  return `select gs_enter_round_result(${lit(input.id ?? randomUUID())}, ${lit(input.roundId)}, ${lit(input.consignmentId)}, ${lit(input.outcome)}, ${lit(USER)}, ${lit(at.toISOString())}, ${money});`;
+  const more =
+    input.more === undefined
+      ? ""
+      : `, null, ${lit(JSON.stringify(input.more.map((part) => ({ amount: Number(part.amount), currency: part.currency, method: part.method ?? "driver_cash" }))))}::jsonb`;
+  return `select gs_enter_round_result(${lit(input.id ?? randomUUID())}, ${lit(input.roundId)}, ${lit(input.consignmentId)}, ${lit(input.outcome)}, ${lit(USER)}, ${lit(at.toISOString())}, ${money}${more});`;
 }
 
 /** Enters what happened at one stop. Returns the result's id. */

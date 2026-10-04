@@ -400,15 +400,25 @@ test("dinars collected on a round convert at that day's rate", () => {
   );
   assert.equal(entryCount(), entries);
 
-  // $62.00 at 1,470 is 91,140 IQD. He hands over 91,000, which is $61.90.
-  const result = enterResult({ roundId: round, consignmentId: consignment, outcome: "paid", received: { amount: 91000, currency: "IQD" }, at: NEXT_DAY });
+  // $62.00 at 1,470 is 91,140 IQD. He hands over 90,000: more than 500 dinars short, so it is worth what it converts to.
+  const short = enterResult({ roundId: round, consignmentId: consignment, outcome: "paid", received: { amount: 90000, currency: "IQD" }, at: NEXT_DAY });
   assert.equal(
-    app(`select iqd_per_100_usd || ',' || credited_usd_cents from round_results where id = ${lit(result)};`),
-    `147000,${iqdToUsdCents(91000n, 147000)}`,
+    app(`select iqd_per_100_usd || ',' || credited_usd_cents from round_results where id = ${lit(short)};`),
+    `147000,${iqdToUsdCents(90000n, 147000)}`,
   );
-  assert.equal(money(consignment), "6200,6190,10");
-  // Ten cents short. With no write-offs it stays owed and stays listed until San gives a rounding rule.
-  assert.equal(missed(round), "Sixty-two dollars:10");
+  assert.equal(money(consignment), "6200,6122,78");
+  assert.equal(missed(round), "Sixty-two dollars:78");
+
+  // He hands over 91,000, which is $61.90: the nearest thousand to what he owes. The CEO's rule: that settles it.
+  const rounding = BigInt(app("select balance from account_overview where code = 'dinar_rounding_usd';"));
+  const result = enterResult({ roundId: round, consignmentId: consignment, outcome: "paid", received: { amount: 91000, currency: "IQD" }, at: NEXT_DAY });
+  assert.equal(iqdToUsdCents(91000n, 147000), 6190n);
+  assert.equal(app(`select iqd_per_100_usd || ',' || credited_usd_cents from round_results where id = ${lit(result)};`), "147000,6200");
+  assert.equal(money(consignment), "6200,6200,0");
+  assert.equal(missed(round), "", "nothing is left owed, so nobody forgot to collect");
+  assert.equal(BigInt(app("select balance from account_overview where code = 'dinar_rounding_usd';")) - rounding, 10n, "rounding took the 10 cents");
+  // Every dinar he handed over is the driver's to hand in.
+  assert.equal(app(`select collected from round_cash where round_id = ${lit(round)} and currency = 'IQD';`), "91000");
 
   // The database and the app convert the same way, to the cent.
   let seed = 4711;

@@ -5,6 +5,9 @@
 //   PUT  /v1/fx-rates/:day            Set a day's dinar rate ("today" or a date)
 //   GET  /v1/payments                 Customer payments, with how each was paid
 //   POST /v1/payments                 Office or wallet payment, applied to the oldest unpaid
+//   POST /v1/payments/parts           One visit paid in more than one way: dollars and dinars, cash and a wallet
+//   GET  /v1/errors                   The CEO's Error entries
+//   POST /v1/errors                   A small amount off what a customer owes, with no money arriving
 //   GET  /v1/cash-outs                Cash paid out of the vault
 //   POST /v1/cash-outs                China, driver pay, fuel and car, customs and airport, rent and salaries, other
 //   POST /v1/exchanges                Dinars changed into dollars, or back
@@ -21,9 +24,12 @@ import {
   CashOutQuery,
   ChinaAccountQuery,
   IdParams,
+  ErrorQuery,
   LedgerQuery,
   NewCashOutRequest,
+  NewErrorRequest,
   NewExchangeRequest,
+  NewPaymentPartsRequest,
   NewPaymentRequest,
   PaymentQuery,
   RateDayParams,
@@ -39,8 +45,11 @@ import {
   type Denomination,
   type Entry,
   type EntryLine,
+  type ErrorEntry,
+  type OfficeMethod,
   type Page,
   type Payment,
+  type PaymentParts,
   type Rate,
   type RateToday,
   type Vault,
@@ -52,11 +61,14 @@ import {
   cashOut,
   currencyExchange,
   currencyExchangeToDinars,
+  errorCorrection,
   money,
   officePayment,
+  planPayment,
   sentToChina,
   walletPayment,
   type EntryDraft,
+  type Money,
 } from "@green-star/domain";
 import type { FastifyInstance } from "fastify";
 import type { Queryable, Row } from "../db.ts";
@@ -76,9 +88,74 @@ const PAYMENTS = `
   select p.entry_id, p.customer_id, c.display_name as customer_name, p.kind, p.method, p.received_amount, p.received_currency,
          p.iqd_per_100_usd, p.credited_usd_cents, p.happened_at, p.created_at, p.note,
          -- The round a payment was taken on, whether it was cash to the driver or a wallet at the door.
-         coalesce(p.round_id, (select r.round_id from round_results r where r.payment_entry_id = p.entry_id)) as round_id,
+         coalesce(p.round_id, (select r.round_id from round_payment_entries r where r.entry_id = p.entry_id)) as round_id,
          p.paid_for_consignment_id, p.reversed
   from payments p join customers c on c.id = p.customer_id`;
+
+const ERRORS = `select x.entry_id, x.customer_id, x.customer_name, x.amount_usd_cents, x.happened_at, x.created_at, x.note, x.reversed from error_entries x`;
+const toError = (row: Row): ErrorEntry => camel<ErrorEntry>(row);
+
+interface PaymentInput {
+  customerId: string;
+  parts: readonly { received: Money; method: OfficeMethod }[];
+  at: Date;
+  userId: string;
+  /** One key per part: the same visit sent twice posts each part once. */
+  keys: readonly string[];
+  forConsignmentId?: string | undefined;
+  note?: string | undefined;
+}
+
+/**
+ * Posts what a customer handed over in one visit and returns the entries, in
+ * the order they were applied: dollars first, then dinars. Dinars that come
+ * to what he still owes, give or take half the rounding step, settle it: on
+ * the consignment the money is for first, then on everything he owes.
+ */
+async function takePayment(q: Queryable, input: PaymentInput): Promise<string[]> {
+  const customer = await q.first("select 1 from customers where id = $1 and merged_into is null", [input.customerId]);
+  if (customer === undefined) throw notFound("That customer");
+  // Nothing else moves his account between reading what he owes and posting.
+  await q.query("select gs_lock_customer($1)", [input.customerId]);
+
+  const dinars = input.parts.some((part) => part.received.currency === "IQD");
+  const ratePer100 = dinars ? await dayRate(q, input.at) : undefined;
+  const owed = await q.first<{ step: number; balance: string; target: string | null }>(
+    `select (select dinar_rounding_iqd from settings) as step,
+            coalesce((select balance_usd_cents from customer_balances where customer_id = $1), 0)::text as balance,
+            (select remaining_usd_cents from consignment_money where consignment_id = $2 and customer_id = $1)::text as target`,
+    [input.customerId, input.forConsignmentId ?? null],
+  );
+  if (owed === undefined) throw new Error("the settings row is missing");
+  const stepIqd = BigInt(owed.step);
+  const plan = planPayment(
+    input.parts.map((part) => part.received),
+    { ratePer100, owedUsdCents: BigInt(owed.balance), owedForConsignmentUsdCents: owed.target === null ? undefined : BigInt(owed.target), stepIqd },
+  );
+
+  const entries: string[] = [];
+  for (const planned of plan.parts) {
+    const part = input.parts[planned.index] as PaymentInput["parts"][number];
+    const payment = {
+      customerId: input.customerId,
+      received: part.received,
+      ...(part.received.currency === "IQD" && ratePer100 !== undefined
+        ? { ratePer100, rounding: { creditUsdCents: planned.creditUsdCents, stepIqd } }
+        : {}),
+    };
+    const draft = part.method === "office_cash" ? officePayment(payment) : walletPayment({ ...payment, wallet: part.method });
+    entries.push(
+      await postEntry(q, draft, {
+        happenedAt: input.at,
+        createdBy: input.userId,
+        key: input.keys[planned.index] as string,
+        forConsignment: input.forConsignmentId,
+        reason: input.note,
+      }),
+    );
+  }
+  return entries;
+}
 
 /** Entries with their lines, in the order asked for. */
 async function entriesById(q: Queryable, ids: readonly string[]): Promise<Entry[]> {
@@ -195,21 +272,72 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     const at = happened(body.happenedAt);
     const received = money(body.received.amount, body.received.currency);
     return write(ctx, request, reply, async ({ q, auth, key }) => {
-      const customer = await q.first("select 1 from customers where id = $1 and merged_into is null", [body.customerId]);
-      if (customer === undefined) throw notFound("That customer");
-      const ratePer100 = received.currency === "IQD" ? await dayRate(q, at) : undefined;
-      const input = { customerId: body.customerId, received, ...(ratePer100 === undefined ? {} : { ratePer100 }) };
-      const draft =
-        body.method === "office_cash" ? officePayment(input) : walletPayment({ ...input, wallet: body.method });
-      const entryId = await postEntry(q, draft, {
-        happenedAt: at,
-        createdBy: auth.user.id,
-        key: `api:${key}`,
-        forConsignment: body.forConsignmentId,
-        reason: body.note,
+      const [entryId] = await takePayment(q, {
+        customerId: body.customerId,
+        parts: [{ received, method: body.method }],
+        at,
+        userId: auth.user.id,
+        keys: [`api:${key}`],
+        forConsignmentId: body.forConsignmentId,
+        note: body.note,
       });
       const row = await q.first(`${PAYMENTS} where p.entry_id = $1`, [entryId]);
       return { status: 201, body: toPayment(row as Row) };
+    });
+  });
+
+  app.post("/payments/parts", { config: { access: "signed_in" } }, async (request, reply): Promise<PaymentParts> => {
+    const body = parse(NewPaymentPartsRequest, request.body);
+    const at = happened(body.happenedAt);
+    const parts = body.parts.map((part) => ({ received: money(part.received.amount, part.received.currency), method: part.method }));
+    return write(ctx, request, reply, async ({ q, auth, key }) => {
+      // One transaction: every part is saved or none is.
+      const entries = await takePayment(q, {
+        customerId: body.customerId,
+        parts,
+        at,
+        userId: auth.user.id,
+        keys: parts.map((_, index) => `api:${key}:${index + 1}`),
+        forConsignmentId: body.forConsignmentId,
+        note: body.note,
+      });
+      const rows = await q.query<Row & { entry_id: string }>(`${PAYMENTS} where p.entry_id = any($1::uuid[])`, [entries]);
+      const byId = new Map(rows.map((row) => [row.entry_id, row]));
+      return { status: 201, body: { payments: entries.map((id) => toPayment(byId.get(id) as Row)) } };
+    });
+  });
+
+  // -- Error entries --------------------------------------------------------
+
+  app.get("/errors", { config: { access: "signed_in" } }, async (request): Promise<Page<ErrorEntry>> => {
+    const query = parse(ErrorQuery, request.query);
+    const p = pager(query, "x.created_at", "x.entry_id::text");
+    const params: unknown[] = [];
+    let where = "";
+    if (query.customerId !== undefined) {
+      params.push(query.customerId);
+      where = ` and x.customer_id = $${params.length}`;
+    }
+    const rows = await read(ctx, (q) =>
+      q.query(`${ERRORS.replace("select ", `select ${p.columns}, `)} where true ${where} ${p.where(params)} ${p.orderAndLimit(params)}`, params),
+    );
+    return p.page(rows, toError);
+  });
+
+  app.post("/errors", { config: { access: "signed_in" } }, async (request, reply): Promise<ErrorEntry> => {
+    const body = parse(NewErrorRequest, request.body);
+    const at = happened(body.happenedAt);
+    return write(ctx, request, reply, async ({ q, auth, key }) => {
+      const customer = await q.first("select 1 from customers where id = $1 and merged_into is null", [body.customerId]);
+      if (customer === undefined) throw notFound("That customer");
+      // The database holds it to the limit in Settings and to what he owes.
+      const entryId = await postEntry(
+        q,
+        errorCorrection({ customerId: body.customerId, amountUsdCents: BigInt(body.amountUsdCents), ...(body.note === undefined ? {} : { reason: body.note }) }),
+        { happenedAt: at, createdBy: auth.user.id, key: `api:${key}` },
+      );
+      const row = await q.first(`${ERRORS} where x.entry_id = $1`, [entryId]);
+      return { status: 201, body: toError(row as Row) };
     });
   });
 

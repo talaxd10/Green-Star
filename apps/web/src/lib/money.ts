@@ -3,6 +3,7 @@
 // Nothing here uses floating point for an amount.
 
 import type { Currency } from "@green-star/contracts";
+import { planPayment, roundDinars as roundDinarsExactly } from "@green-star/domain";
 
 function groupThousands(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -89,6 +90,52 @@ export function iqdToUsdCents(dinars: number, iqdPer100Usd: number): number {
 /** Cents as dinars at a rate. Half a dinar rounds up. */
 export function usdCentsToIqd(cents: number, iqdPer100Usd: number): number {
   return Number((BigInt(cents) * BigInt(iqdPer100Usd) * 2n + 10000n) / 20000n);
+}
+
+/** 192,850 to the nearest 1,000 is 193,000. A step of 0 leaves it as it is. */
+export function roundDinars(dinars: number, stepIqd: number): number {
+  return Number(roundDinarsExactly(BigInt(dinars), BigInt(stepIqd)));
+}
+
+export interface PartsPlan {
+  /** What each part goes on his account as, in the order the parts were given. */
+  credited: number[];
+  /** What each part converts to, to the cent. Differs from credited only for dinars that settle what he owes. */
+  exact: number[];
+  /** Everything together, as it goes on his account. */
+  total: number;
+  /** What he owes after it. Negative when he is left in credit. */
+  left: number;
+}
+
+/**
+ * What a payment in one or more parts will do, before it is saved: the same
+ * working-out the API posts with. Dollars go on first, then the dinars, and
+ * dinars that come to what is still owed (give or take half the rounding
+ * step) settle it. Null when a part is in dinars and today's rate is not set.
+ */
+export function planParts(
+  parts: readonly { amount: number; currency: Currency }[],
+  options: { iqdPer100Usd: number | null; owedUsdCents: number; owedForConsignmentUsdCents?: number; stepIqd: number },
+): PartsPlan | null {
+  if (parts.length === 0 || parts.some((part) => part.amount <= 0)) return null;
+  if (options.iqdPer100Usd === null && parts.some((part) => part.currency === "IQD")) return null;
+  const plan = planPayment(
+    parts.map((part) => ({ amount: BigInt(part.amount), currency: part.currency })),
+    {
+      ratePer100: options.iqdPer100Usd ?? undefined,
+      owedUsdCents: BigInt(options.owedUsdCents),
+      owedForConsignmentUsdCents: options.owedForConsignmentUsdCents === undefined ? undefined : BigInt(options.owedForConsignmentUsdCents),
+      stepIqd: BigInt(options.stepIqd),
+    },
+  );
+  const credited = parts.map(() => 0);
+  const exact = parts.map(() => 0);
+  for (const part of plan.parts) {
+    credited[part.index] = Number(part.creditUsdCents);
+    exact[part.index] = Number(part.exactUsdCents);
+  }
+  return { credited, exact, total: Number(plan.creditUsdCents), left: Number(plan.leftUsdCents) };
 }
 
 /** Adds up a count of notes: { "10000": 3, "5000": 1 } is 35000. */

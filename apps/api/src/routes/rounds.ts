@@ -40,6 +40,7 @@ import {
   type Page,
   type RoundCash,
   type RoundDetail,
+  type RoundPayment,
   type RoundStop,
   type RoundSummary,
 } from "@green-star/contracts";
@@ -70,7 +71,7 @@ export async function roundDetail(q: Queryable, id: string): Promise<RoundDetail
     `select d.stop_id, d.consignment_id, d.customer_id, d.customer_name, d.trust, d.shipment_id, d.shipment_code, d.city,
             d.consignment_status, d.cartons_expected, d.cartons_received, d.amount_due_usd_cents, d.remaining_usd_cents,
             d.result_id, d.outcome, d.received_amount, d.received_currency, d.method, d.iqd_per_100_usd,
-            d.credited_usd_cents, d.happened_at, d.has_payment_receipt, d.has_received_receipt, d.has_carton_photo, d.has_exception,
+            d.credited_usd_cents, d.payments, d.happened_at, d.has_payment_receipt, d.has_received_receipt, d.has_carton_photo, d.has_exception,
             exists (select 1 from missed_collections m where m.round_id = d.round_id and m.consignment_id = d.consignment_id) as missed_collection
      from round_stop_details d where d.round_id = $1 order by d.seq`,
     [id],
@@ -91,7 +92,10 @@ export async function roundDetail(q: Queryable, id: string): Promise<RoundDetail
     ...toRound(summary),
     note: (summary.note as string | null) ?? null,
     createdAt: (summary.created_at as Date).toISOString(),
-    stopList: stops.map((row) => camel<RoundStop>(row, { iqd_per_100_usd: "iqdPer100Usd" })),
+    stopList: stops.map((row) => ({
+      ...camel<RoundStop>(row, { iqd_per_100_usd: "iqdPer100Usd" }),
+      payments: (row.payments as Row[]).map((part) => camel<RoundPayment>(part, { iqd_per_100_usd: "iqdPer100Usd" })),
+    })),
     cash: cash.map((row) => camel<RoundCash>(row)),
     handIns: handIns.map(
       (h): HandIn => ({
@@ -252,7 +256,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     return write(ctx, request, reply, async ({ q, auth }) => {
       // One transaction: every row is saved or none is.
       for (const row of rows) {
-        await q.query("select gs_enter_round_result($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", [
+        await q.query("select gs_enter_round_result($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)", [
           row.id,
           id,
           row.consignmentId,
@@ -263,6 +267,10 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
           row.received?.currency ?? null,
           row.method ?? null,
           row.note ?? null,
+          // The rest of what he handed over, when he paid in more than one way.
+          row.more === undefined || row.more.length === 0
+            ? null
+            : JSON.stringify(row.more.map((part) => ({ amount: part.received.amount, currency: part.received.currency, method: part.method }))),
         ]);
       }
       return { body: await roundDetail(q, id) };

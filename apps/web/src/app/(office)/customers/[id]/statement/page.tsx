@@ -13,7 +13,7 @@ import { formatMoney, formatRatePerDollar } from "@/lib/money";
 
 /** What a line was, in a few words. */
 function what(line: StatementLine): string {
-  const text = line.kind === "charge" ? `File ${line.shipmentCode ?? ""}`.trim() : line.method === null ? "Payment" : METHOD[line.method];
+  const text = line.kind === "charge" ? `File ${line.shipmentCode ?? ""}`.trim() : line.kind === "correction" ? "Error" : line.method === null ? "Payment" : METHOD[line.method];
   return line.isReversal ? `${text}, taken back` : text;
 }
 

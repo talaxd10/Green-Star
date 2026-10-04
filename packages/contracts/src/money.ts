@@ -25,10 +25,11 @@ export const ENTRY_KINDS = [
   "cash_out",
   "currency_exchange",
   "reversal",
+  "error_correction",
 ] as const;
 export type EntryKind = (typeof ENTRY_KINDS)[number];
 
-export const ACCOUNT_KINDS = ["customer", "driver_cash", "vault", "wallet", "china_payable", "expense", "exchange_clearing"] as const;
+export const ACCOUNT_KINDS = ["customer", "driver_cash", "vault", "wallet", "china_payable", "expense", "exchange_clearing", "adjustment"] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 /** "today", or a Baghdad day: the rate that applies is the rate of the day the money moved. */
@@ -48,7 +49,8 @@ export const RateQuery = z.object({ from: Day.optional(), to: Day.optional() });
 
 /**
  * POST /v1/payments. A customer pays at the office, in cash or by wallet. It
- * pays his oldest unpaid consignment first, unless it names one.
+ * pays his oldest unpaid consignment first, unless it names one. Dinars that
+ * come to what he owes, give or take half the rounding step, settle it.
  */
 export const NewPaymentRequest = z.strictObject({
   customerId: Uuid,
@@ -60,6 +62,47 @@ export const NewPaymentRequest = z.strictObject({
   note: Note.optional(),
 });
 export type NewPaymentRequest = z.infer<typeof NewPaymentRequest>;
+
+/** The most ways one visit, or one stop on a round, can be paid in. */
+export const MAX_PAYMENT_PARTS = 4;
+
+/** True when no two parts are in the same currency and paid the same way: those are one payment. */
+export function partsDiffer(parts: readonly { received: { currency: string }; method: string }[]): boolean {
+  return new Set(parts.map((part) => `${part.received.currency} ${part.method}`)).size === parts.length;
+}
+
+/**
+ * POST /v1/payments/parts. One visit paid in more than one way: dollars and
+ * dinars, cash and a wallet. Every part is saved or none is. Dollars are
+ * applied first, so it is the dinars that settle what is left.
+ */
+export const NewPaymentPartsRequest = z.strictObject({
+  customerId: Uuid,
+  parts: z
+    .array(z.strictObject({ received: Money, method: z.enum(OFFICE_METHODS) }))
+    .min(2, "One payment goes to /v1/payments")
+    .max(MAX_PAYMENT_PARTS, `At most ${MAX_PAYMENT_PARTS} payments in one visit`)
+    .refine(partsDiffer, "Two payments in the same currency and the same way are one payment. Add them up."),
+  happenedAt: Instant.optional(),
+  forConsignmentId: Uuid.optional(),
+  note: Note.optional(),
+});
+export type NewPaymentPartsRequest = z.infer<typeof NewPaymentPartsRequest>;
+
+/**
+ * POST /v1/errors. The CEO's "Error" entry: a small amount taken off what a
+ * customer owes, with no money arriving. At most the limit in Settings, and
+ * never more than he owes.
+ */
+export const NewErrorRequest = z.strictObject({
+  customerId: Uuid,
+  amountUsdCents: z.number().int("An amount is a whole number of cents").positive("Enter an amount").max(1_000_000),
+  happenedAt: Instant.optional(),
+  note: Note.optional(),
+});
+export type NewErrorRequest = z.infer<typeof NewErrorRequest>;
+
+export const ErrorQuery = PageQuery.extend({ customerId: Uuid.optional() });
 
 export const PaymentQuery = PageQuery.extend({ customerId: Uuid.optional(), from: Day.optional(), to: Day.optional() });
 
@@ -143,6 +186,23 @@ export interface Payment {
   note: string | null;
   roundId: string | null;
   paidForConsignmentId: string | null;
+  reversed: boolean;
+}
+
+/** What POST /v1/payments/parts returns: one payment per part, in the order they were applied. */
+export interface PaymentParts {
+  payments: Payment[];
+}
+
+/** An Error entry: what was taken off a customer's account with no money arriving. */
+export interface ErrorEntry {
+  entryId: string;
+  customerId: string;
+  customerName: string;
+  amountUsdCents: number;
+  happenedAt: string;
+  createdAt: string;
+  note: string | null;
   reversed: boolean;
 }
 

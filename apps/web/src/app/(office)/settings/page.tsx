@@ -7,6 +7,7 @@ import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input,
 import { api } from "@/lib/api";
 import { useGet, useSave } from "@/lib/hooks";
 import { dayTime, phone } from "@/lib/labels";
+import { amountForInput, formatMoney, parseAmount } from "@/lib/money";
 
 function MyPassword() {
   const toast = useToast();
@@ -227,13 +228,91 @@ function Checks() {
   );
 }
 
+/** The CEO's two rules for small differences: how dinars are rounded, and how big an Error entry can be. */
+function MoneyRules() {
+  const toast = useToast();
+  const settings = useGet<Settings>("/v1/settings");
+  const [draft, setDraft] = useState<{ step?: string; limit?: string }>({});
+  const save = useSave(
+    (body: unknown, key: string) => api.put<Settings>("/v1/settings", body, key),
+    () => {
+      toast("Settings saved");
+      setDraft({});
+    },
+  );
+  if (settings.data === undefined) {
+    return (
+      <Card>
+        <CardHead title="Money rules" />
+        <Loading />
+      </Card>
+    );
+  }
+  const s = settings.data;
+  const step = draft.step ?? String(s.dinarRoundingIqd);
+  const limit = draft.limit ?? amountForInput(s.errorMaxUsdCents, "USD");
+  const stepTyped = parseAmount(step, "IQD");
+  const limitTyped = parseAmount(limit, "USD");
+  const stepOk = stepTyped !== null && stepTyped <= 10_000;
+  const limitOk = limitTyped !== null && limitTyped <= 10_000;
+  const body = {
+    ...(stepOk && stepTyped !== s.dinarRoundingIqd ? { dinarRoundingIqd: stepTyped } : {}),
+    ...(limitOk && limitTyped !== s.errorMaxUsdCents ? { errorMaxUsdCents: limitTyped } : {}),
+  };
+
+  return (
+    <Card>
+      <CardHead title="Money rules" hint="For the small differences that come with taking dollars and dinars." />
+      <form
+        className="flex flex-col gap-4 p-5"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void save.save(body);
+        }}
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            label="Round dinars to the nearest"
+            hint={
+              stepOk && stepTyped > 0 ? (
+                <>
+                  Dinars within <span className="num">{formatMoney(Math.floor(stepTyped / 2), "IQD")}</span> of what he owes settle it. $133 at 1,570 is 208,810: 209,000 pays it.
+                </>
+              ) : (
+                "0 switches rounding off: a dinar payment is worth exactly what it converts to."
+              )
+            }
+            problem={save.fieldProblem("dinarRoundingIqd") ?? (stepOk ? undefined : "0 to 10,000 dinars")}
+          >
+            {(id) => <Input id={id} className="num" inputMode="numeric" value={step} onChange={(e) => setDraft({ ...draft, step: e.target.value })} />}
+          </Field>
+          <Field
+            label="An Error entry is at most, in dollars"
+            hint={limitOk && limitTyped > 0 ? "The most that can be taken off a customer's account at a time with no money arriving." : "0 switches Error entries off."}
+            problem={save.fieldProblem("errorMaxUsdCents") ?? (limitOk ? undefined : "$0 to $100")}
+          >
+            {(id) => <Input id={id} className="num" inputMode="decimal" value={limit} onChange={(e) => setDraft({ ...draft, limit: e.target.value })} />}
+          </Field>
+        </div>
+        <Problem of={save.problem} />
+        <div>
+          <Button type="submit" busy={save.saving} disabled={!stepOk || !limitOk || Object.keys(body).length === 0}>
+            Save the money rules
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <>
-      <PageHead title="Settings" hint="The checks, the people who carry the goods, your password and the devices you are signed in on." />
+      <PageHead title="Settings" hint="The checks, the money rules, the people who carry the goods, your password and the devices you are signed in on." />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <div className="flex flex-col gap-5">
           <Checks />
+          <MoneyRules />
           <MyPassword />
           <Devices />
         </div>

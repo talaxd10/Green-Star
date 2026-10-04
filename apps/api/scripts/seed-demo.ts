@@ -177,6 +177,19 @@ await file("GSSK6944", 0, [[rebwar, 9_900, 3, "Erbil"], [nasrin, 14_000, 4, "Duh
 // -- Money at the office.
 await send("POST", "/v1/payments", { customerId: karzan, received: { amount: 5_000, currency: "USD" }, method: "office_cash", happenedAt: ago(1, 11) });
 await send("POST", "/v1/payments", { customerId: goran, received: { amount: 145_000, currency: "IQD" }, method: "zaincash", happenedAt: ago(0, 9) });
+// Baxtyar pays for the file that is waiting, in two ways: $27 in dollars and the rest in dinars.
+// The rest is 39,150 IQD at 1,450; he hands over 39,000, and that settles it.
+await send("POST", "/v1/payments/parts", {
+  customerId: baxtyar,
+  parts: [
+    { received: { amount: 2_700, currency: "USD" }, method: "office_cash" },
+    { received: { amount: 39_000, currency: "IQD" }, method: "office_cash" },
+  ],
+  happenedAt: ago(0, 10),
+  note: "Paid before the goods went out",
+});
+// Two dollars nobody will chase.
+await send("POST", "/v1/errors", { customerId: karzan, amountUsdCents: 200, happenedAt: ago(0, 10), note: "Change he was owed from last week" });
 await send("POST", "/v1/cash-outs", { category: "fuel_car", amount: { amount: 40_000, currency: "IQD" }, reason: "Fuel for the Kirkuk round", happenedAt: ago(1, 8) });
 await send("POST", "/v1/cash-outs", { category: "driver_pay", amount: { amount: 5_000, currency: "USD" }, reason: "Karwan, week of 27 September", happenedAt: ago(2, 17) });
 await send("POST", "/v1/cash-outs", { category: "china", amount: { amount: 10_000, currency: "USD" }, reason: "Sent with Kak Azad's transfer", happenedAt: ago(2, 12) });

@@ -1,6 +1,6 @@
 "use client";
 
-import type { CashOut, CashOutCategory, Currency, CustomerDetail, CustomerSummary, OfficeMethod, Page, Payment, Rate } from "@green-star/contracts";
+import type { CashOut, CashOutCategory, Currency, CustomerDetail, CustomerSummary, ErrorEntry, OfficeMethod, Page, Payment, PaymentParts, Rate, Settings } from "@green-star/contracts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
@@ -11,7 +11,7 @@ import { WalletsCard } from "@/components/wallets";
 import { api } from "@/lib/api";
 import { useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CASH_OUT, dayTime, METHOD } from "@/lib/labels";
-import { formatMoney, formatRate, formatRatePerDollar, iqdToUsdCents, parseAmount, parseRate } from "@/lib/money";
+import { amountForInput, formatMoney, formatRate, formatRatePerDollar, parseAmount, parseRate, planParts, roundDinars, usdCentsToIqd } from "@/lib/money";
 
 // ---------------------------------------------------------------------------
 // Today's rate
@@ -126,32 +126,73 @@ function AmountBox({ id, amount, currency, onAmount, onCurrency, problem, fixedC
   );
 }
 
+/** One way he paid: an amount, its currency, and how. */
+interface PartRow {
+  key: number;
+  amount: string;
+  currency: Currency;
+  method: OfficeMethod;
+}
+
+const MAX_PARTS = 4;
+let partKey = 0;
+const newPart = (currency: Currency = "USD"): PartRow => ({ key: ++partKey, amount: "", currency, method: "office_cash" });
+
+/**
+ * What a customer hands over in one visit: dollars, dinars, a wallet, or any
+ * mix of them. Dollars are applied first, so the dinars settle what is left.
+ */
 function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
   const toast = useToast();
   const rate = useRateToday();
+  const settings = useGet<Settings>("/v1/settings");
   const [customer, setCustomer] = useState<CustomerSummary | null>(initial);
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<Currency>("USD");
-  const [method, setMethod] = useState<OfficeMethod>("office_cash");
+  const [rows, setRows] = useState<PartRow[]>(() => [newPart()]);
   const [note, setNote] = useState("");
 
   useEffect(() => setCustomer(initial), [initial]);
 
-  const pay = useSave(
+  const done = (credited: number, name: string) => {
+    toast(`${formatMoney(credited, "USD")} taken from ${name}`);
+    setRows([newPart()]);
+    setNote("");
+    setCustomer(null);
+  };
+  const payOne = useSave(
     (body: unknown, key: string) => api.post<Payment>("/v1/payments", body, key),
-    (payment) => {
-      toast(`${formatMoney(payment.receivedAmount, payment.receivedCurrency)} taken from ${payment.customerName}`);
-      setAmount("");
-      setNote("");
-      setCustomer(null);
-    },
+    (payment) => done(payment.creditedUsdCents, payment.customerName),
   );
+  const payParts = useSave(
+    (body: unknown, key: string) => api.post<PaymentParts>("/v1/payments/parts", body, key),
+    (made) => done(made.payments.reduce((sum, p) => sum + p.creditedUsdCents, 0), made.payments[0]?.customerName ?? ""),
+  );
+  const pay = rows.length === 1 ? payOne : payParts;
 
-  const typed = amount.trim() === "" ? null : parseAmount(amount, currency);
-  const bad = amount.trim() !== "" && typed === null;
+  const edit = (key: number, change: Partial<PartRow>) => {
+    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...change } : row)));
+    payOne.clear();
+    payParts.clear();
+  };
+
   const todayRate = rate.data?.rate?.iqdPer100Usd ?? null;
-  const cents = typed === null ? null : currency === "USD" ? typed : todayRate === null ? null : iqdToUsdCents(typed, todayRate);
-  const needsRate = currency === "IQD" && todayRate === null;
+  const step = settings.data?.dinarRoundingIqd ?? 1000;
+  const owed = customer?.balanceUsdCents ?? 0;
+  const typed = rows.map((row) => (row.amount.trim() === "" ? null : parseAmount(row.amount, row.currency)));
+  const bad = rows.map((row, i) => row.amount.trim() !== "" && typed[i] === null);
+  const needsRate = todayRate === null && rows.some((row) => row.currency === "IQD");
+  const twice = rows.some((row, i) => rows.findIndex((other) => other.currency === row.currency && other.method === row.method) !== i);
+  const complete = typed.every((amount) => amount !== null && amount > 0);
+  const filled = rows.flatMap((row, i) => (typed[i] ? [{ at: i, amount: typed[i] as number, currency: row.currency }] : []));
+  // What each part will be worth, worked out the way the API will.
+  const plan = filled.length === 0 ? null : planParts(filled, { iqdPer100Usd: todayRate, owedUsdCents: owed, stepIqd: step });
+  const creditOf = (i: number) => {
+    const at = filled.findIndex((part) => part.at === i);
+    return plan === null || at === -1 ? null : { credited: plan.credited[at] as number, exact: plan.exact[at] as number };
+  };
+  // What is left for the dinars once the dollars typed so far are counted.
+  const dollars = filled.filter((part) => part.currency === "USD").reduce((sum, part) => sum + part.amount, 0);
+  const rest = owed - dollars;
+  const restInDinars = rest > 0 && todayRate !== null ? usdCentsToIqd(rest, todayRate) : null;
 
   return (
     <form
@@ -159,39 +200,174 @@ function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
       noValidate
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void pay.save({ customerId: customer?.id, received: { amount: typed, currency }, method, ...(note.trim() === "" ? {} : { note }) });
+        const parts = rows.map((row, i) => ({ received: { amount: typed[i], currency: row.currency }, method: row.method }));
+        const extra = note.trim() === "" ? {} : { note };
+        if (parts.length === 1) void payOne.save({ customerId: customer?.id, ...parts[0], ...extra });
+        else void payParts.save({ customerId: customer?.id, parts, ...extra });
       }}
     >
       <Field label="Customer" hint={customer ? (customer.balanceUsdCents > 0 ? <>He owes <b className="num">{formatMoney(customer.balanceUsdCents, "USD")}</b>. It pays his oldest unpaid file first.</> : "He owes nothing. The money will stay on his account as credit.") : undefined} problem={pay.fieldProblem("customerId")}>
         {(id) => <CustomerPicker id={id} value={customer} onChange={setCustomer} />}
       </Field>
-      <div className="grid grid-cols-2 gap-4">
-        <Field
-          label="Amount received"
-          problem={bad ? (currency === "IQD" ? "Dinars are whole numbers" : "That is not an amount") : needsRate ? "Set today's rate first" : pay.fieldProblem("received.amount")}
-          hint={currency === "IQD" && cents !== null && todayRate !== null ? <>→ <b className="num">{formatMoney(cents, "USD")}</b> on his account at {formatRatePerDollar(todayRate)}</> : undefined}
-        >
-          {(id) => <AmountBox id={id} amount={amount} currency={currency} onAmount={setAmount} onCurrency={setCurrency} problem={bad ? "bad" : undefined} />}
-        </Field>
-        <Field label="How it was paid">
-          {(id) => (
-            <Select id={id} value={method} onChange={(e) => setMethod(e.target.value as OfficeMethod)}>
-              {(["office_cash", "fib", "fastpay", "zaincash"] as const).map((m) => (
-                <option key={m} value={m}>
-                  {METHOD[m]}
-                </option>
-              ))}
-            </Select>
+
+      <div className="flex flex-col gap-3">
+        {rows.map((row, i) => {
+          const worth = creditOf(i);
+          const suggest = row.currency === "IQD" && row.amount.trim() === "" && restInDinars !== null ? roundDinars(restInDinars, step) : null;
+          const hint =
+            row.currency === "IQD" && worth !== null && todayRate !== null ? (
+              worth.credited === worth.exact ? (
+                <>→ <b className="num">{formatMoney(worth.credited, "USD")}</b> on his account at {formatRatePerDollar(todayRate)}</>
+              ) : (
+                <>→ counts as <b className="num">{formatMoney(worth.credited, "USD")}</b>: it settles what he owes. Exactly, it is <span className="num">{formatMoney(worth.exact, "USD")}</span> at {formatRatePerDollar(todayRate)}.</>
+              )
+            ) : suggest !== null && restInDinars !== null ? (
+              <>
+                {rest === owed ? "What he owes" : "What is left"} is <span className="num">{formatMoney(restInDinars, "IQD")}</span>.{" "}
+                <button type="button" className="font-semibold text-green hover:underline" onClick={() => edit(row.key, { amount: amountForInput(suggest, "IQD") })}>
+                  Use <span className="num">{formatMoney(suggest, "IQD")}</span>
+                </button>
+              </>
+            ) : null;
+          return (
+            <div key={row.key} className="flex flex-col gap-1.5" data-part={i + 1}>
+              <div className="grid grid-cols-2 gap-4">
+                <Field
+                  label={i === 0 ? "Amount received" : "And"}
+                  problem={bad[i] ? (row.currency === "IQD" ? "Dinars are whole numbers" : "That is not an amount") : row.currency === "IQD" && todayRate === null ? "Set today's rate first" : pay.fieldProblem(rows.length === 1 ? "received.amount" : `parts.${i}.received.amount`)}
+                >
+                  {(id) => <AmountBox id={id} amount={row.amount} currency={row.currency} onAmount={(amount) => edit(row.key, { amount })} onCurrency={(currency) => edit(row.key, { currency })} problem={bad[i] ? "bad" : undefined} />}
+                </Field>
+                <Field label={i === 0 ? "How it was paid" : "Paid by"}>
+                  {(id) => (
+                    <Select id={id} value={row.method} onChange={(e) => edit(row.key, { method: e.target.value as OfficeMethod })}>
+                      {(["office_cash", "fib", "fastpay", "zaincash"] as const).map((m) => (
+                        <option key={m} value={m}>
+                          {METHOD[m]}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              </div>
+              {hint !== null || rows.length > 1 ? (
+                <div className="flex items-start justify-between gap-4 text-[13px] text-muted">
+                  <p>{hint}</p>
+                  {rows.length > 1 ? (
+                    <button type="button" className="shrink-0 hover:text-red hover:underline" aria-label={`Remove row ${i + 1}`} onClick={() => setRows((current) => current.filter((other) => other.key !== row.key))}>
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {rows.length < MAX_PARTS ? (
+            <button
+              type="button"
+              className="text-[13px] font-semibold text-green hover:underline"
+              onClick={() => setRows((current) => [...current, newPart(current.some((row) => row.currency === "IQD") ? "USD" : "IQD")])}
+            >
+              + He also paid another way
+            </button>
+          ) : (
+            <span />
           )}
-        </Field>
+          {rows.length > 1 && plan !== null && complete ? (
+            <p className="text-sm" data-testid="payment-total">
+              Together <b className="num">{formatMoney(plan.total, "USD")}</b>.{" "}
+              {customer === null ? null : plan.left > 0 ? (
+                <>He will still owe <b className="num">{formatMoney(plan.left, "USD")}</b>.</>
+              ) : plan.left < 0 ? (
+                <><b className="num">{formatMoney(-plan.left, "USD")}</b> stays on his account as credit.</>
+              ) : (
+                "He will owe nothing."
+              )}
+            </p>
+          ) : null}
+        </div>
+        {twice ? <p className="text-[13px] text-red">Two of these are in the same currency and paid the same way. Add them up into one.</p> : null}
       </div>
+
       <Field label="Note" hint="Optional: a receipt number, who brought it">
         {(id) => <Input id={id} value={note} onChange={(e) => setNote(e.target.value)} />}
       </Field>
       <Problem of={pay.problem} />
       <div>
-        <Button type="submit" tone="primary" busy={pay.saving} disabled={customer === null || typed === null || typed === 0 || needsRate}>
+        <Button type="submit" tone="primary" busy={pay.saving} disabled={customer === null || !complete || needsRate || twice}>
           Take the payment
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** The CEO's "Error" entry: a small amount off what a customer owes, with no money arriving. */
+function ErrorForm({ initial }: { initial: CustomerSummary | null }) {
+  const toast = useToast();
+  const settings = useGet<Settings>("/v1/settings");
+  const [customer, setCustomer] = useState<CustomerSummary | null>(initial);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  useEffect(() => setCustomer(initial), [initial]);
+
+  const enter = useSave(
+    (body: unknown, key: string) => api.post<ErrorEntry>("/v1/errors", body, key),
+    (made) => {
+      toast(`${formatMoney(made.amountUsdCents, "USD")} taken off ${made.customerName}'s account`);
+      setAmount("");
+      setNote("");
+      setCustomer(null);
+    },
+  );
+
+  const limit = settings.data?.errorMaxUsdCents ?? null;
+  const typed = amount.trim() === "" ? null : parseAmount(amount, "USD");
+  const owes = customer?.balanceUsdCents ?? null;
+  // What the screen can see is wrong before it is sent. The database holds the same two limits.
+  const local =
+    amount.trim() !== "" && typed === null
+      ? "That is not an amount"
+      : typed !== null && limit !== null && typed > limit
+        ? `At most ${formatMoney(limit, "USD")}. The limit is in Settings.`
+        : typed !== null && owes !== null && typed > Math.max(owes, 0)
+          ? owes > 0
+            ? `He owes ${formatMoney(owes, "USD")}`
+            : "He owes nothing"
+          : undefined;
+  const problem = local ?? enter.fieldProblem("amountUsdCents");
+
+  return (
+    <form
+      className="flex flex-col gap-4 p-5"
+      noValidate
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        void enter.save({ customerId: customer?.id, amountUsdCents: typed, ...(note.trim() === "" ? {} : { note }) });
+      }}
+    >
+      <p className="rounded-md bg-sunken px-3 py-2 text-[13px] text-muted">
+        For a small difference that is not worth chasing. It takes the amount off what he owes; no money comes in.
+        {limit !== null ? <> At most <b className="num text-ink">{formatMoney(limit, "USD")}</b> at a time.</> : null}
+      </p>
+      <Field label="Customer" hint={customer ? (customer.balanceUsdCents > 0 ? <>He owes <b className="num">{formatMoney(customer.balanceUsdCents, "USD")}</b>.</> : "He owes nothing, so there is nothing to take off.") : undefined} problem={enter.fieldProblem("customerId")}>
+        {(id) => <CustomerPicker id={id} value={customer} onChange={setCustomer} />}
+      </Field>
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Amount to take off, in dollars" problem={problem}>
+          {(id) => <Input id={id} className="num text-right" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => { setAmount(e.target.value); enter.clear(); }} problem={problem} />}
+        </Field>
+        <Field label="Note" hint="Optional: what the difference was">
+          {(id) => <Input id={id} value={note} onChange={(e) => setNote(e.target.value)} />}
+        </Field>
+      </div>
+      <Problem of={enter.problem} />
+      <div>
+        <Button type="submit" tone="primary" busy={enter.saving} disabled={customer === null || typed === null || typed === 0 || local !== undefined}>
+          Enter the error
         </Button>
       </div>
     </form>
@@ -335,11 +511,12 @@ function Reverse({ entryId, what, onClose }: { entryId: string; what: string; on
 
 // ---------------------------------------------------------------------------
 
-type Tab = "payment" | "cash_out" | "exchange";
+type Tab = "payment" | "cash_out" | "exchange" | "error";
 const TABS: { value: Tab; label: string }[] = [
   { value: "payment", label: "A customer pays" },
   { value: "cash_out", label: "Cash out" },
   { value: "exchange", label: "Exchange" },
+  { value: "error", label: "Error" },
 ];
 
 function MoneyScreen() {
@@ -349,6 +526,7 @@ function MoneyScreen() {
   const [reversing, setReversing] = useState<{ entryId: string; what: string } | null>(null);
   const payments = useGet<Page<Payment>>("/v1/payments?limit=12");
   const cashOuts = useGet<Page<CashOut>>("/v1/cash-outs?limit=8");
+  const errors = useGet<Page<ErrorEntry>>("/v1/errors?limit=8");
 
   return (
     <>
@@ -360,7 +538,7 @@ function MoneyScreen() {
             <div className="border-b border-rule px-5 py-3.5">
               <Segmented label="What is being entered" value={tab} onChange={setTab} options={TABS} />
             </div>
-            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : <ExchangeForm />}
+            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} />}
           </Card>
           <WalletsCard />
         </div>
@@ -460,6 +638,47 @@ function MoneyScreen() {
               </Table>
             )}
           </Card>
+
+          {errors.data !== undefined && errors.data.items.length > 0 ? (
+            <Card>
+              <CardHead title="Latest errors" hint="Small amounts taken off a customer's account with no money arriving." />
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>When</Th>
+                    <Th>Customer</Th>
+                    <Th right>Taken off</Th>
+                    <Th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {errors.data.items.map((x) => (
+                    <tr key={x.entryId} className={x.reversed ? "text-faint" : undefined}>
+                      <Td className="whitespace-nowrap text-[13px] text-muted">{dayTime(x.happenedAt)}</Td>
+                      <Td>
+                        <Link href={`/customers/${x.customerId}`} className="font-semibold hover:text-green" dir="auto">
+                          {x.customerName}
+                        </Link>
+                        {x.note ? <span className="block text-[12px] text-muted">{x.note}</span> : null}
+                      </Td>
+                      <Td right>
+                        <Money amount={x.amountUsdCents} className={x.reversed ? "line-through" : undefined} />
+                      </Td>
+                      <Td right>
+                        {x.reversed ? (
+                          <span className="text-[12px]">reversed</span>
+                        ) : (
+                          <button type="button" className="text-[13px] text-muted hover:text-red hover:underline" onClick={() => setReversing({ entryId: x.entryId, what: `${x.customerName}'s error entry` })}>
+                            Reverse
+                          </button>
+                        )}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </Card>
+          ) : null}
         </div>
       </div>
       {reversing ? <Reverse entryId={reversing.entryId} what={reversing.what} onClose={() => setReversing(null)} /> : null}

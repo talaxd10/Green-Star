@@ -12,8 +12,8 @@ export interface StatementLine {
   /** The Baghdad day it happened. */
   day: string;
   happenedAt: string;
-  /** A charge from a file, or a payment. */
-  kind: "charge" | "payment";
+  /** A charge from a file, a payment, or an Error entry: an amount taken off with no money arriving. */
+  kind: "charge" | "payment" | "correction";
   /** True for a line that takes an earlier one back. Only seen when corrections are asked for. */
   isReversal: boolean;
   /** True for an entry that was taken back, and for the line that took it back. */
@@ -60,7 +60,7 @@ export interface Statement {
   from: string | null;
   /** What he owed before the first line shown. */
   openingBalanceUsdCents: number;
-  /** Charged and paid in the lines shown. */
+  /** Charged and paid in the lines shown. Paid includes what an Error entry took off. */
   chargedUsdCents: number;
   paidUsdCents: number;
   /** Oldest first. The last line's balance is balanceUsdCents. */

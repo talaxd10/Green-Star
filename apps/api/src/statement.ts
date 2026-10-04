@@ -40,7 +40,9 @@ export function lineText(line: StatementLine): string {
   const what =
     line.kind === "charge"
       ? `File ${line.shipmentCode ?? ""}`.trim()
-      : line.method === null
+      : line.kind === "correction"
+        ? "Correction"
+        : line.method === null
         ? "Payment"
         : line.method === "driver_cash" || line.method === "office_cash"
           ? `Paid in ${METHOD[line.method]}`

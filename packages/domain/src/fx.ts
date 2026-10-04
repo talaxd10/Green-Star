@@ -47,6 +47,45 @@ export function conversionAgrees(dinars: bigint, cents: bigint, ratePer100: numb
   return 2n * abs(abs(dinars) * 10000n - abs(cents) * BigInt(ratePer100)) <= BigInt(ratePer100);
 }
 
+/** The step dinars are rounded to unless Settings says otherwise: the nearest 1,000. */
+export const DINAR_ROUNDING_IQD = 1000n;
+
+/** 208,810 to the nearest 1,000 is 209,000. Half a step rounds up. A step of 0 leaves it as it is. */
+export function roundDinars(dinars: bigint, stepIqd: bigint = DINAR_ROUNDING_IQD): bigint {
+  if (stepIqd < 0n) throw new RangeError("the rounding step cannot be negative");
+  if (stepIqd === 0n) return dinars;
+  if (dinars < 0n) return -roundDinars(-dinars, stepIqd);
+  return ((2n * dinars + stepIqd) / (2n * stepIqd)) * stepIqd;
+}
+
+/**
+ * True when these dinars come to this many cents, give or take half the
+ * rounding step. $133.00 at 157,000 is 208,810 IQD: 209,000 settles it and so
+ * does 208,500; 208,000 does not. Nothing settles a customer who owes nothing.
+ * The database applies the same test (gs_dinars_settle).
+ */
+export function dinarsSettle(dinars: bigint, ratePer100: number, owedUsdCents: bigint, stepIqd: bigint = DINAR_ROUNDING_IQD): boolean {
+  assertRate(ratePer100);
+  if (stepIqd < 0n) throw new RangeError("the rounding step cannot be negative");
+  if (owedUsdCents <= 0n || dinars <= 0n) return false;
+  const exactly = usdCentsToIqd(owedUsdCents, ratePer100);
+  const off = dinars > exactly ? dinars - exactly : exactly - dinars;
+  return 2n * off <= stepIqd;
+}
+
+/**
+ * What a dinar payment is worth on the customer's account. Each amount owed
+ * is tried in turn (the consignment the money is for, then everything he
+ * owes): the first one the dinars settle is what he is credited. Otherwise
+ * the dinars are worth exactly what they convert to.
+ */
+export function dinarCredit(dinars: bigint, ratePer100: number, owedUsdCents: readonly bigint[], stepIqd: bigint = DINAR_ROUNDING_IQD): bigint {
+  for (const owed of owedUsdCents) {
+    if (dinarsSettle(dinars, ratePer100, owed, stepIqd)) return owed;
+  }
+  return iqdToUsdCents(dinars, ratePer100);
+}
+
 /** The nearest whole rate for an exchange where both amounts are known. */
 export function impliedRate(dinars: bigint, cents: bigint): number {
   if (dinars <= 0n || cents <= 0n) {

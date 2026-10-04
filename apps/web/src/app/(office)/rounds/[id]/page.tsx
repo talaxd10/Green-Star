@@ -1,6 +1,6 @@
 "use client";
 
-import type { Consignment, Currency, RoundDetail, RoundMethod, RoundOutcome, RoundStop, Vault } from "@green-star/contracts";
+import type { Consignment, Currency, RoundDetail, RoundMethod, RoundOutcome, RoundStop, Settings, Vault } from "@green-star/contracts";
 import { checkRoundResult } from "@green-star/domain";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -10,15 +10,23 @@ import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input,
 import { api } from "@/lib/api";
 import { useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CONSIGNMENT, dayTime, METHOD, OUTCOME, ROUND, TRUST } from "@/lib/labels";
-import { amountForInput, countNotes, formatMoney, formatRatePerDollar, iqdToUsdCents, parseAmount } from "@/lib/money";
+import { amountForInput, countNotes, formatMoney, formatRatePerDollar, parseAmount, planParts } from "@/lib/money";
 
-/** What is typed on one row before it is saved. */
-interface Draft {
-  outcome: RoundOutcome | "";
+/** One way he paid at the door: an amount, its currency, and how. */
+interface PartDraft {
   amount: string;
   currency: Currency;
   method: RoundMethod;
 }
+
+/** What is typed on one row before it is saved. A customer can pay in more than one way, so the money is a list. */
+interface Draft {
+  outcome: RoundOutcome | "";
+  parts: PartDraft[];
+}
+
+const MAX_PARTS = 4;
+const emptyPart = (currency: Currency = "USD"): PartDraft => ({ amount: "", currency, method: "driver_cash" });
 
 const PROBLEMS: Record<string, string> = {
   payment_incomplete: "Enter the amount and how it was paid",
@@ -26,16 +34,25 @@ const PROBLEMS: Record<string, string> = {
   outcome_invalid: "That outcome does not fit this customer",
   not_trusted: "He is pay first and cannot take goods on account",
   payment_missing: "Paid needs the amount received",
+  payment_invalid: "Two payments in the same currency and the same way are one payment",
 };
 
 function fromStop(stop: RoundStop): Draft {
   return {
     outcome: stop.outcome ?? "",
-    amount: stop.receivedAmount === null || stop.receivedCurrency === null ? "" : amountForInput(stop.receivedAmount, stop.receivedCurrency),
-    currency: stop.receivedCurrency ?? "USD",
-    method: stop.method ?? "driver_cash",
+    parts:
+      stop.payments.length === 0
+        ? [emptyPart()]
+        : stop.payments.map((part) => ({ amount: amountForInput(part.receivedAmount, part.receivedCurrency), currency: part.receivedCurrency, method: part.method })),
   };
 }
+
+/** What this stop's own payments were worth on his account, all parts together. */
+const creditedAt = (stop: RoundStop) => stop.payments.reduce((sum, part) => sum + part.creditedUsdCents, 0);
+
+/** The parts of a row that have an amount typed, as numbers. Null amounts are ones that could not be read. */
+const typedParts = (draft: Draft) =>
+  draft.parts.flatMap((part) => (part.amount.trim() === "" ? [] : [{ amount: parseAmount(part.amount, part.currency), currency: part.currency, method: part.method }]));
 
 /** The outcomes that make sense for this customer and these goods. */
 function outcomesFor(stop: RoundStop): RoundOutcome[] {
@@ -182,6 +199,7 @@ export default function RoundPage() {
   const { id } = useParams<{ id: string }>();
   const round = useGet<RoundDetail>(`/v1/rounds/${id}`);
   const rate = useRateToday();
+  const settings = useGet<Settings>("/v1/settings");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [when, setWhen] = useState(nowLocal);
   const [doing, setDoing] = useState<{ kind: "exception" | "void"; stop: RoundStop } | { kind: "voidHandIn"; handInId: string } | { kind: "add" } | null>(null);
@@ -196,50 +214,67 @@ export default function RoundPage() {
   const planned = r.status === "planned";
   const editable = !planned;
   const todayRate = rate.data?.rate?.iqdPer100Usd ?? null;
+  const step = settings.data?.dinarRoundingIqd ?? 1000;
   const files = [...new Set(r.stopList.map((stop) => stop.shipmentCode))];
 
   const draftOf = (stop: RoundStop): Draft => drafts[stop.consignmentId] ?? fromStop(stop);
   const edit = (stop: RoundStop, change: Partial<Draft>) =>
     setDrafts((current) => {
-      const next = { ...draftOf(stop), ...change };
-      if (!takesMoney(next.outcome)) next.amount = "";
+      const next = { ...(current[stop.consignmentId] ?? fromStop(stop)), ...change };
+      if (!takesMoney(next.outcome)) next.parts = [emptyPart()];
       return { ...current, [stop.consignmentId]: next };
     });
+  const editPart = (stop: RoundStop, index: number, change: Partial<PartDraft>) =>
+    edit(stop, { parts: draftOf(stop).parts.map((part, i) => (i === index ? { ...part, ...change } : part)) });
+  const addPart = (stop: RoundStop) => {
+    const parts = draftOf(stop).parts;
+    // The usual second part is the other currency.
+    edit(stop, { parts: [...parts, emptyPart(parts.some((part) => part.currency === "IQD") ? "USD" : "IQD")] });
+  };
+  const removePart = (stop: RoundStop, index: number) => edit(stop, { parts: draftOf(stop).parts.filter((_, i) => i !== index) });
+
+  /** What was owed on these goods before this stop's own payments. */
+  const dueAt = (stop: RoundStop) => Math.min(stop.amountDueUsdCents, stop.remainingUsdCents + creditedAt(stop));
 
   /** What is wrong with a row as typed, or null. The database checks the same rules again. */
   const problemOf = (stop: RoundStop, draft: Draft): string | null => {
     if (draft.outcome === "") return null;
-    const typed = draft.amount.trim();
-    const amount = typed === "" ? null : parseAmount(typed, draft.currency);
-    if (typed !== "" && amount === null) return draft.currency === "IQD" ? "Dinars are whole numbers" : "That is not an amount";
-    if (amount !== null && draft.currency === "IQD" && todayRate === null) return "Set today's dinar rate first";
+    const typed = typedParts(draft);
+    const unread = typed.find((part) => part.amount === null);
+    if (unread !== undefined) return unread.currency === "IQD" ? "Dinars are whole numbers" : "That is not an amount";
+    if (typed.some((part) => part.currency === "IQD") && todayRate === null) return "Set today's dinar rate first";
+    if (new Set(typed.map((part) => `${part.currency} ${part.method}`)).size < typed.length) return PROBLEMS.payment_invalid as string;
+    const first = typed[0];
     const problem = checkRoundResult({
       outcome: draft.outcome,
       trust: stop.trust,
       amountDueUsdCents: BigInt(stop.amountDueUsdCents),
-      // What was owed before this stop's own payment, if it already has one.
-      remainingUsdCents: BigInt(stop.remainingUsdCents + (stop.creditedUsdCents ?? 0)),
-      ...(amount === null ? {} : { received: { amount: BigInt(amount), currency: draft.currency }, method: draft.method }),
+      // What was owed before this stop's own payments, if it already has some.
+      remainingUsdCents: BigInt(stop.remainingUsdCents + creditedAt(stop)),
+      ...(first === undefined ? {} : { received: { amount: BigInt(first.amount as number), currency: first.currency }, method: first.method }),
     });
     return problem === null ? null : (PROBLEMS[problem] ?? problem);
   };
 
+  /** True while a row added for another payment has no amount yet: not a mistake, but not ready to save. */
+  const waitingOn = (draft: Draft) => draft.parts.length > 1 && draft.parts.some((part) => part.amount.trim() === "");
+
   const changed = r.stopList.filter((stop) => stop.consignmentId in drafts && draftOf(stop).outcome !== "");
-  const anyProblem = changed.some((stop) => problemOf(stop, draftOf(stop)) !== null);
+  const anyProblem = changed.some((stop) => problemOf(stop, draftOf(stop)) !== null || waitingOn(draftOf(stop)));
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const happenedAt = new Date(when).toISOString();
     void saveResults.save({
       results: changed.map((stop) => {
-        const draft = draftOf(stop);
-        const amount = draft.amount.trim() === "" ? null : parseAmount(draft.amount, draft.currency);
+        const [first, ...more] = typedParts(draftOf(stop)).map((part) => ({ received: { amount: part.amount, currency: part.currency }, method: part.method }));
         return {
           id: crypto.randomUUID(),
           consignmentId: stop.consignmentId,
-          outcome: draft.outcome,
+          outcome: draftOf(stop).outcome,
           happenedAt,
-          ...(amount === null ? {} : { received: { amount, currency: draft.currency }, method: draft.method }),
+          ...(first === undefined ? {} : first),
+          ...(more.length === 0 ? {} : { more }),
         };
       }),
     });
@@ -319,10 +354,17 @@ export default function RoundPage() {
                   const draft = draftOf(stop);
                   const dirty = stop.consignmentId in drafts;
                   const problem = dirty ? problemOf(stop, draft) : null;
-                  const amount = draft.amount.trim() === "" ? null : parseAmount(draft.amount, draft.currency);
+                  const typed = typedParts(draft);
+                  // What each part will be worth, worked out the way it will be saved: dollars first, then the dinars.
+                  const plan =
+                    dirty && !waitingOn(draft) && typed.length > 0 && typed.every((part) => part.amount !== null && part.amount > 0)
+                      ? planParts(
+                          typed.map((part) => ({ amount: part.amount as number, currency: part.currency })),
+                          { iqdPer100Usd: todayRate, owedUsdCents: dueAt(stop), owedForConsignmentUsdCents: dueAt(stop), stepIqd: step },
+                        )
+                      : null;
                   const cartonsOff = stop.cartonsExpected !== null && stop.cartonsReceived !== null && stop.cartonsExpected !== stop.cartonsReceived;
-                  // What was owed on these goods before this stop's own payment.
-                  const due = Math.min(stop.amountDueUsdCents, stop.remainingUsdCents + (stop.creditedUsdCents ?? 0));
+                  const due = dueAt(stop);
                   return (
                     <tr key={stop.consignmentId} className={stop.missedCollection ? "bg-red-soft/40" : dirty ? "bg-amber-soft/40" : undefined}>
                       <Td className="min-w-[210px]">
@@ -359,37 +401,83 @@ export default function RoundPage() {
                       <Td>
                         {editable && takesMoney(draft.outcome) ? (
                           <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-1.5">
-                              <Input aria-label={`Amount received from ${stop.customerName}`} className="num h-9 w-28 text-right" inputMode="decimal" placeholder={draft.outcome === "paid" ? "amount" : "if any"} value={draft.amount} onChange={(e) => edit(stop, { amount: e.target.value })} problem={problem ?? undefined} />
-                              <Select aria-label="Currency" className="h-9 w-[76px]" value={draft.currency} onChange={(e) => edit(stop, { currency: e.target.value as Currency })}>
-                                <option value="USD">$</option>
-                                <option value="IQD">IQD</option>
-                              </Select>
-                              <Select aria-label="How it was paid" className="h-9 w-[168px]" value={draft.method} onChange={(e) => edit(stop, { method: e.target.value as RoundMethod })}>
-                                {(["driver_cash", "fib", "fastpay", "zaincash"] as const).map((method) => (
-                                  <option key={method} value={method}>
-                                    {METHOD[method]}
-                                  </option>
-                                ))}
-                              </Select>
-                            </div>
+                            {draft.parts.map((part, index) => (
+                              <div key={index} className="flex items-center gap-1.5" data-part={index + 1}>
+                                <Input
+                                  aria-label={index === 0 ? `Amount received from ${stop.customerName}` : `Payment ${index + 1} from ${stop.customerName}`}
+                                  className="num h-9 w-28 text-right"
+                                  inputMode="decimal"
+                                  placeholder={index > 0 ? "and" : draft.outcome === "paid" ? "amount" : "if any"}
+                                  value={part.amount}
+                                  onChange={(e) => editPart(stop, index, { amount: e.target.value })}
+                                  problem={problem ?? undefined}
+                                />
+                                <Select aria-label={index === 0 ? "Currency" : `Currency of payment ${index + 1}`} className="h-9 w-[76px]" value={part.currency} onChange={(e) => editPart(stop, index, { currency: e.target.value as Currency })}>
+                                  <option value="USD">$</option>
+                                  <option value="IQD">IQD</option>
+                                </Select>
+                                <Select aria-label={index === 0 ? "How it was paid" : `How payment ${index + 1} was paid`} className="h-9 w-[168px]" value={part.method} onChange={(e) => editPart(stop, index, { method: e.target.value as RoundMethod })}>
+                                  {(["driver_cash", "fib", "fastpay", "zaincash"] as const).map((method) => (
+                                    <option key={method} value={method}>
+                                      {METHOD[method]}
+                                    </option>
+                                  ))}
+                                </Select>
+                                {index > 0 ? (
+                                  <button type="button" className="px-1 text-[13px] text-muted hover:text-red" aria-label={`Remove ${stop.customerName}'s payment ${index + 1}`} onClick={() => removePart(stop, index)}>
+                                    ✕
+                                  </button>
+                                ) : null}
+                              </div>
+                            ))}
                             {problem ? (
                               <span className="text-[12px] text-red">{problem}</span>
-                            ) : !dirty && stop.receivedCurrency === "IQD" && stop.creditedUsdCents !== null && stop.iqdPer100Usd !== null ? (
-                              <span className="num text-[12px] text-muted">
-                                → {formatMoney(stop.creditedUsdCents, "USD")} at {formatRatePerDollar(stop.iqdPer100Usd)}
-                              </span>
-                            ) : dirty && amount !== null && draft.currency === "IQD" && todayRate !== null ? (
-                              <span className="num text-[12px] text-muted">
-                                → about {formatMoney(iqdToUsdCents(amount, todayRate), "USD")} at today&apos;s {formatRatePerDollar(todayRate)}
-                              </span>
+                            ) : waitingOn(draft) ? (
+                              <span className="text-[12px] text-muted">Enter the other amount, or remove the empty row.</span>
+                            ) : !dirty ? (
+                              stop.payments.map((paid, index) =>
+                                paid.receivedCurrency === "IQD" && paid.iqdPer100Usd !== null ? (
+                                  <span key={index} className="num text-[12px] text-muted">
+                                    {formatMoney(paid.receivedAmount, "IQD")} → {formatMoney(paid.creditedUsdCents, "USD")} at {formatRatePerDollar(paid.iqdPer100Usd)}
+                                  </span>
+                                ) : null,
+                              )
+                            ) : plan !== null && todayRate !== null ? (
+                              <>
+                                {typed.map((part, index) =>
+                                  part.currency !== "IQD" ? null : plan.credited[index] === plan.exact[index] ? (
+                                    <span key={index} className="num text-[12px] text-muted">
+                                      {formatMoney(part.amount as number, "IQD")} → about {formatMoney(plan.exact[index] as number, "USD")} at today&apos;s {formatRatePerDollar(todayRate)}
+                                    </span>
+                                  ) : (
+                                    <span key={index} className="num text-[12px] text-green">
+                                      {formatMoney(part.amount as number, "IQD")} → counts as {formatMoney(plan.credited[index] as number, "USD")}: it settles what is left
+                                    </span>
+                                  ),
+                                )}
+                                {typed.length > 1 ? (
+                                  <span className="num text-[12px] text-muted">
+                                    Together {formatMoney(plan.total, "USD")}
+                                    {plan.left > 0 ? `, ${formatMoney(plan.left, "USD")} still owed` : plan.left < 0 ? `, ${formatMoney(-plan.left, "USD")} over` : ", paid in full"}
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : null}
+                            {draft.parts.length < MAX_PARTS ? (
+                              <button type="button" className="self-start text-[12px] font-semibold text-green hover:underline" aria-label={`${stop.customerName} also paid another way`} onClick={() => addPart(stop)}>
+                                + also paid another way
+                              </button>
                             ) : null}
                           </div>
-                        ) : stop.receivedAmount !== null && stop.receivedCurrency !== null ? (
-                          <span className="num text-sm">
-                            {formatMoney(stop.receivedAmount, stop.receivedCurrency)}
-                            {stop.receivedCurrency === "IQD" && stop.creditedUsdCents !== null ? <span className="text-muted"> → {formatMoney(stop.creditedUsdCents, "USD")}</span> : null}
-                            {stop.method && stop.method !== "driver_cash" ? <span className="ml-2 text-[12px] text-muted">{METHOD[stop.method]}</span> : null}
+                        ) : stop.payments.length > 0 ? (
+                          <span className="num flex flex-col text-sm">
+                            {stop.payments.map((paid, index) => (
+                              <span key={index}>
+                                {formatMoney(paid.receivedAmount, paid.receivedCurrency)}
+                                {paid.receivedCurrency === "IQD" ? <span className="text-muted"> → {formatMoney(paid.creditedUsdCents, "USD")}</span> : null}
+                                {paid.method !== "driver_cash" ? <span className="ml-2 text-[12px] text-muted">{METHOD[paid.method]}</span> : null}
+                              </span>
+                            ))}
                           </span>
                         ) : editable && problem ? (
                           <span className="text-[12px] text-red">{problem}</span>

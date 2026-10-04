@@ -94,6 +94,7 @@ export const ENTRY: Record<EntryKind, string> = {
   cash_out: "Cash out",
   currency_exchange: "Currency exchange",
   reversal: "Reversal",
+  error_correction: "Error",
 };
 
 /** What an alert is about, in two or three words. */

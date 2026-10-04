@@ -204,6 +204,10 @@ export interface Settings {
   vaultCloseTime: string;
   /** How many days wallet money may wait before it is checked against the app. */
   walletCheckDays: number;
+  /** Dinars that come to what is owed, give or take half this step, settle it. 1000 is the nearest 1,000. 0 is off. */
+  dinarRoundingIqd: number;
+  /** The most one Error entry can take off a customer's account, in cents. 0 is off. */
+  errorMaxUsdCents: number;
   updatedAt: string;
 }
 
@@ -213,6 +217,8 @@ export const SettingsRequest = z
     heldInCarDays: z.number().int().min(1, "At least 1 day").max(60, "At most 60 days").optional(),
     vaultCloseTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "A time looks like 18:00").optional(),
     walletCheckDays: z.number().int().min(1, "At least 1 day").max(60, "At most 60 days").optional(),
+    dinarRoundingIqd: z.number().int("A whole number of dinars").min(0, "0 switches rounding off").max(10_000, "At most 10,000 dinars").optional(),
+    errorMaxUsdCents: z.number().int("A whole number of cents").min(0, "0 switches Error entries off").max(10_000, "At most $100.00").optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined), "Nothing to change");
 export type SettingsRequest = z.infer<typeof SettingsRequest>;

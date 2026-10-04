@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { type Currency, Instant, Money, Name, Note, Notes, PageQuery, Reason, Uuid } from "./common.ts";
 import type { Trust } from "./customers.ts";
+import { MAX_PAYMENT_PARTS, partsDiffer } from "./money.ts";
 import type { ConsignmentStatus } from "./shipments.ts";
 
 export const ROUND_STATUSES = ["planned", "out", "returned", "handed_in"] as const;
@@ -75,6 +76,11 @@ const Result = z
     /** What the customer handed over, as on the receipt. */
     received: Money.optional(),
     method: z.enum(ROUND_METHODS).optional(),
+    /** The rest of what he handed over, when he paid in more than one way: dollars and dinars, cash and a wallet. */
+    more: z
+      .array(z.strictObject({ received: Money, method: z.enum(ROUND_METHODS) }))
+      .max(MAX_PAYMENT_PARTS - 1, `At most ${MAX_PAYMENT_PARTS} payments at one stop`)
+      .optional(),
     /** When the goods and money changed hands. A dinar amount converts at that day's rate. */
     happenedAt: Instant,
     note: Note.optional(),
@@ -82,7 +88,18 @@ const Result = z
   .refine((row) => (row.received === undefined) === (row.method === undefined), {
     path: ["method"],
     message: "An amount needs how it was paid, and the other way round",
-  });
+  })
+  .refine((row) => row.more === undefined || row.more.length === 0 || row.received !== undefined, {
+    path: ["more"],
+    message: "The other payments need a first one",
+  })
+  .refine(
+    (row) =>
+      row.received === undefined || row.method === undefined || row.more === undefined
+        ? true
+        : partsDiffer([{ received: row.received, method: row.method }, ...row.more]),
+    { path: ["more"], message: "Two payments in the same currency and the same way are one payment. Add them up." },
+  );
 
 /**
  * PUT /v1/rounds/:id/results. What happened at each stop, from the receipts
@@ -149,6 +166,16 @@ export interface RoundSummary {
   gapIqd: number;
 }
 
+/** One part of what a customer handed over at a stop. */
+export interface RoundPayment {
+  receivedAmount: number;
+  receivedCurrency: Currency;
+  method: RoundMethod;
+  iqdPer100Usd: number | null;
+  /** What it was worth on his account. For dinars that settled what he owed, that is what he owed. */
+  creditedUsdCents: number;
+}
+
 export interface RoundStop {
   stopId: string;
   consignmentId: string;
@@ -170,6 +197,8 @@ export interface RoundStop {
   method: RoundMethod | null;
   iqdPer100Usd: number | null;
   creditedUsdCents: number | null;
+  /** Every part of what he handed over, in the order it was applied. The fields above are the first. */
+  payments: RoundPayment[];
   happenedAt: string | null;
   hasPaymentReceipt: boolean;
   hasReceivedReceipt: boolean;

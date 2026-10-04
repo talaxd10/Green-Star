@@ -368,7 +368,7 @@ test("a wallet is checked against its app: a gap needs a note and raises an aler
 });
 
 /** Everything GET /v1/settings sends. */
-const SETTINGS = ["heldInCarDays", "updatedAt", "vaultCloseTime", "walletCheckDays"];
+const SETTINGS = ["dinarRoundingIqd", "errorMaxUsdCents", "heldInCarDays", "updatedAt", "vaultCloseTime", "walletCheckDays"];
 
 test("the settings are the CEO's to change, and every change is on record", async () => {
   const read = await s.get("/v1/settings");
