@@ -9,9 +9,8 @@ import { result, Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, await seedUser(h, "owner"));
 
 test("a file typed in by hand is a draft and charges nobody until it is confirmed", async () => {
   const a = await s.customer();
@@ -211,12 +210,12 @@ test("the goods ready for a round are listed, and a customer's consignments with
   assert.equal((await s.get("/v1/consignments")).status, 400);
 });
 
-test("files are listed by status, newest first, and the owner sees them too", async () => {
+test("files are listed by status, newest first", async () => {
   const a = await s.customer();
   const draft = await s.draft([[a, 1_000]]);
   const confirmed = await s.file([[a, 1_000]]);
 
-  const drafts = (await s.get("/v1/shipments?status=draft&limit=200", ownerCookie)).body.items.map((f: { id: string }) => f.id);
+  const drafts = (await s.get("/v1/shipments?status=draft&limit=200")).body.items.map((f: { id: string }) => f.id);
   assert.ok(drafts.includes(draft.id) && !drafts.includes(confirmed.id));
   const first = (await s.get("/v1/shipments?limit=1")).body;
   assert.equal(first.items[0].id, confirmed.id);

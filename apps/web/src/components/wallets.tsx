@@ -74,7 +74,7 @@ const isUnused = (w: Wallet) => w.ledgerBalance === 0 && w.expectedInApp === 0 &
 /** The wallets money has come in through first, then the ones never used. */
 const inOrder = (wallets: readonly Wallet[]) => [...wallets].sort((a, b) => Number(isUnused(a)) - Number(isUnused(b)) || a.name.localeCompare(b.name));
 
-export function WalletsCard({ canCheck }: { canCheck: boolean }) {
+export function WalletsCard() {
   const wallets = useGet<Wallets>("/v1/wallets");
   const [checking, setChecking] = useState<Wallet | null>(null);
 
@@ -133,11 +133,9 @@ export function WalletsCard({ canCheck }: { canCheck: boolean }) {
                     {w.uncheckedSince !== null && !unused ? <span className="block whitespace-nowrap text-[12px]">New money since {dayTime(w.uncheckedSince)}</span> : null}
                   </Td>
                   <Td right>
-                    {canCheck ? (
-                      <Button small onClick={() => setChecking(w)}>
-                        Check
-                      </Button>
-                    ) : null}
+                    <Button small onClick={() => setChecking(w)}>
+                      Check
+                    </Button>
                   </Td>
                 </tr>
               );

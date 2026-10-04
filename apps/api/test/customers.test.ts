@@ -9,10 +9,8 @@ import { Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
-const owner = await seedUser(h, "owner");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, owner);
 
 test("a customer is created with his phones and marks, stored the way the files will match them", async () => {
   const phone = nextPhone();
@@ -35,7 +33,7 @@ test("a customer is created with his phones and marks, stored the way the files 
 
   const read = await s.get(`/v1/customers/${made.body.id}`);
   assert.deepEqual(read.body, made.body);
-  assert.deepEqual((await s.get(`/v1/customers/${made.body.id}`, ownerCookie)).body, made.body, "the owner sees the same");
+  assert.deepEqual((await s.get(`/v1/customers/${made.body.id}`)).body, made.body, "read again, it is the same");
 });
 
 test("he is found by phone in any spelling, by mark, by a mark prefix, and by any part of his name", async () => {
@@ -225,23 +223,28 @@ test("a duplicate is merged into the real customer, and says where it went", asy
   assert.equal((await s.send("PATCH", `/v1/customers/${dup}`, { name: "Back again" })).status, 404, "a merged customer is not changed");
 });
 
-test("the owner reads customers and changes none", async () => {
+test("nobody who is not signed in reads customers or changes one", async () => {
   const id = await s.customer();
-  assert.equal((await s.get("/v1/customers?limit=1", ownerCookie)).status, 200);
+  assert.equal((await call(h.app, "GET", "/v1/customers?limit=1")).status, 401);
+  assert.equal((await call(h.app, "GET", `/v1/customers/${id}`)).status, 401);
   const tries: [string, string, unknown][] = [
-    ["POST", "/v1/customers", { name: "By the owner" }],
-    ["PATCH", `/v1/customers/${id}`, { name: "Renamed by the owner" }],
+    ["POST", "/v1/customers", { name: "By nobody" }],
+    ["PATCH", `/v1/customers/${id}`, { name: "Renamed by nobody" }],
     ["PATCH", `/v1/customers/${id}`, { trust: { trust: "trusted", askedBy: "me" } }],
     ["POST", `/v1/customers/${id}/phones`, { phone: nextPhone() }],
-    ["POST", `/v1/customers/${id}/marks`, { mark: unique("OWNER") }],
+    ["POST", `/v1/customers/${id}/marks`, { mark: unique("NOBODY") }],
     ["POST", `/v1/customers/${id}/merge`, { duplicateId: randomUUID() }],
   ];
   for (const [method, url, body] of tries) {
-    const reply = await call(h.app, method, url, { cookie: ownerCookie, body });
-    assert.equal(reply.status, 403, `${method} ${url}`);
-    assert.equal(reply.body.code, "not_allowed");
+    const reply = await call(h.app, method, url, { body });
+    assert.equal(reply.status, 401, `${method} ${url}`);
+    assert.equal(reply.body.code, "not_signed_in");
   }
-  assert.equal((await s.get(`/v1/customers/${id}`)).body.trust, "pay_first");
+  const after = (await s.get(`/v1/customers/${id}`)).body;
+  assert.equal(after.trust, "pay_first");
+  assert.equal(after.phones.length, 1, "only the phone he was made with");
+  assert.deepEqual(after.marks, []);
+  assert.equal((await h.owner.query("select count(*)::int as n from customers where display_name ilike '%by nobody%'")).rows[0].n, 0);
 });
 
 test("every change to a customer is in the audit log under the CEO's name", async () => {

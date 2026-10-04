@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Card, Chip, Empty, LinkButton, Loading, Money, PageHead, ReadProblem, Segmented, Table, Td, Th, Button } from "@/components/ui";
 import { withQuery } from "@/lib/api";
-import { useCan, usePages } from "@/lib/hooks";
+import { usePages } from "@/lib/hooks";
 import { day, SHIPMENT } from "@/lib/labels";
 
 type Show = "all" | ShipmentStatus;
@@ -31,18 +31,15 @@ export function blockers(file: ShipmentSummary): string[] {
 }
 
 export default function FilesPage() {
-  const canImport = useCan("import_files");
   const [show, setShow] = useState<Show>("all");
   const list = usePages<ShipmentSummary>(withQuery("/v1/shipments", { status: show === "all" ? undefined : show }));
 
   return (
     <>
       <PageHead title="Files" hint="Each file from China, what it should bring in, what has come in, and what stops it closing. A file closes by itself.">
-        {canImport ? (
-          <LinkButton tone="primary" href="/files/new">
-            Type a file in
-          </LinkButton>
-        ) : null}
+        <LinkButton tone="primary" href="/files/new">
+          Type a file in
+        </LinkButton>
       </PageHead>
 
       <div className="mb-4">

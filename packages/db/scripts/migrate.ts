@@ -5,7 +5,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lit, psql, requireEnv } from "../src/psql.ts";
 
-export function migrate(url: string): string[] {
+/** `upTo` stops after that file: for the tests that prove a migration on a database that already has data. */
+export function migrate(url: string, upTo?: string): string[] {
   psql(
     url,
     `create table if not exists schema_migrations (
@@ -15,7 +16,7 @@ export function migrate(url: string): string[] {
   );
   const applied = new Set(psql(url, "select name from schema_migrations order by name;").split("\n").filter(Boolean));
   const dir = join(import.meta.dirname, "..", "migrations");
-  const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+  const files = readdirSync(dir).filter((f) => f.endsWith(".sql") && (upTo === undefined || f <= upTo)).sort();
   const ran: string[] = [];
   for (const file of files) {
     if (applied.has(file)) continue;

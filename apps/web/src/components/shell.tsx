@@ -1,13 +1,13 @@
 "use client";
 
-import type { Action, AlertCount } from "@green-star/contracts";
+import type { AlertCount } from "@green-star/contracts";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { api, type ApiFailure } from "@/lib/api";
 import { useMe, useRateToday } from "@/lib/hooks";
-import { ROLE } from "@/lib/labels";
+import { phone } from "@/lib/labels";
 import { formatRatePerDollar } from "@/lib/money";
 import { icons, Star } from "./icons";
 import { cx, Loading } from "./ui";
@@ -16,8 +16,6 @@ interface NavItem {
   href: string;
   label: string;
   icon: ReactNode;
-  /** Shown only to those who can do this. Everything else is shown to everyone who sees the books. */
-  needs?: Action;
   /** Carries the number of open alerts. */
   badge?: boolean;
 }
@@ -82,11 +80,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (me.error?.status === 401) router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
-    // The office monitor is a screen, not a person: it has nothing to do here.
-    if (me.data?.user.role === "monitor") router.replace("/monitor");
-  }, [me.error, me.data, router, pathname]);
+  }, [me.error, router, pathname]);
 
-  if (me.data === undefined || me.data.user.role === "monitor") {
+  if (me.data === undefined) {
     return (
       <div className="grid min-h-screen place-items-center">
         <Loading what="Opening the office" />
@@ -107,7 +103,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="display text-[19px] text-white">Green Star</span>
         </Link>
         <nav className="flex flex-1 flex-col gap-0.5 px-3" aria-label="Screens">
-          {NAV.filter((item) => item.needs === undefined || me.data.can.includes(item.needs)).map((item) => {
+          {NAV.map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
@@ -130,10 +126,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <p className="truncate text-[14px] font-semibold text-white" dir="auto">
             {me.data.user.name}
           </p>
-          <p className="num text-[11px] uppercase tracking-wider text-rail-muted">
-            {ROLE[me.data.user.role]}
-            {me.data.user.role === "owner" ? " · read only" : ""}
-          </p>
+          <p className="num text-[11px] tracking-wider text-rail-muted">{phone(me.data.user.phone)}</p>
           <button type="button" onClick={signOut} className="mt-3 flex items-center gap-2 text-[13px] text-rail-muted hover:text-white">
             {icons.out} Sign out
           </button>

@@ -6,7 +6,7 @@ import { NoteCounter } from "@/components/note-counter";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Loading, PageHead, Problem, ReadProblem, Stat, Table, Td, Textarea, Th } from "@/components/ui";
 import { api } from "@/lib/api";
-import { useCan, useGet, useSave } from "@/lib/hooks";
+import { useGet, useSave } from "@/lib/hooks";
 import { day, dayTime } from "@/lib/labels";
 import { countNotes, formatMoney } from "@/lib/money";
 
@@ -31,7 +31,6 @@ function TakeBack({ closeId, onClose }: { closeId: string; onClose: () => void }
 }
 
 export default function VaultPage() {
-  const canClose = useCan("enter_money");
   const toast = useToast();
   const vault = useGet<Vault>("/v1/vault");
   const [usdNotes, setUsdNotes] = useState<Record<string, number>>({});
@@ -77,39 +76,33 @@ export default function VaultPage() {
       </Card>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        {canClose ? (
-          <Card>
-            <CardHead title="Count it" hint="How many of each note is in the box." />
-            <form
-              onSubmit={(e: FormEvent) => {
-                e.preventDefault();
-                void close.save({ id, usdNotes, iqdNotes, ...(note.trim() === "" ? {} : { note }) });
-              }}
-            >
-              <div className="grid grid-cols-1 divide-y divide-rule md:grid-cols-2 md:divide-x md:divide-y-0">
-                <NoteCounter currency="USD" denominations={v.denominations} notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
-                <NoteCounter currency="IQD" denominations={v.denominations} notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
+        <Card>
+          <CardHead title="Count it" hint="How many of each note is in the box." />
+          <form
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              void close.save({ id, usdNotes, iqdNotes, ...(note.trim() === "" ? {} : { note }) });
+            }}
+          >
+            <div className="grid grid-cols-1 divide-y divide-rule md:grid-cols-2 md:divide-x md:divide-y-0">
+              <NoteCounter currency="USD" denominations={v.denominations} notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
+              <NoteCounter currency="IQD" denominations={v.denominations} notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
+            </div>
+            <div className="flex flex-col gap-3 border-t border-rule p-5">
+              {gap ? (
+                <Field label="Why the count and the books differ" hint="The gap is kept on this close with your note. From then on the vault is expected to hold what you counted.">
+                  {(fieldId) => <Textarea id={fieldId} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="$2 short. Counted twice. Will check yesterday's receipts." />}
+                </Field>
+              ) : null}
+              <Problem of={close.problem} />
+              <div>
+                <Button type="submit" tone="primary" busy={close.saving} disabled={gap && note.trim() === ""}>
+                  Close the vault
+                </Button>
               </div>
-              <div className="flex flex-col gap-3 border-t border-rule p-5">
-                {gap ? (
-                  <Field label="Why the count and the books differ" hint="The gap is kept on this close with your note. From then on the vault is expected to hold what you counted.">
-                    {(fieldId) => <Textarea id={fieldId} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="$2 short. Counted twice. Will check yesterday's receipts." />}
-                  </Field>
-                ) : null}
-                <Problem of={close.problem} />
-                <div>
-                  <Button type="submit" tone="primary" busy={close.saving} disabled={gap && note.trim() === ""}>
-                    Close the vault
-                  </Button>
-                </div>
-              </div>
-            </form>
-          </Card>
-        ) : (
-          <Card>
-            <Empty title="The CEO closes the vault">You can see every close and what was counted.</Empty>
-          </Card>
-        )}
+            </div>
+          </form>
+        </Card>
 
         <Card>
           <CardHead title="Earlier closes" />
@@ -141,7 +134,7 @@ export default function VaultPage() {
                       <span className={`block ${c.iqd.difference !== 0 ? "text-red" : "text-muted"}`}>{formatMoney(c.iqd.difference, "IQD")}</span>
                     </Td>
                     <Td right className="whitespace-nowrap">
-                      {canClose && !c.voided && c.id === latest?.id ? (
+                      {!c.voided && c.id === latest?.id ? (
                         <button type="button" className="text-[13px] text-muted hover:text-red hover:underline" onClick={() => setTakingBack(c.id)}>
                           Take back
                         </button>

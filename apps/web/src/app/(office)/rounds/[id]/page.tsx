@@ -8,7 +8,7 @@ import { useState, type FormEvent } from "react";
 import { NoteCounter } from "@/components/note-counter";
 import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, ReadProblem, Select, Stat, Table, Td, Textarea, Th } from "@/components/ui";
 import { api } from "@/lib/api";
-import { useCan, useGet, useRateToday, useSave } from "@/lib/hooks";
+import { useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CONSIGNMENT, dayTime, METHOD, OUTCOME, ROUND, TRUST } from "@/lib/labels";
 import { amountForInput, countNotes, formatMoney, formatRatePerDollar, iqdToUsdCents, parseAmount } from "@/lib/money";
 
@@ -180,8 +180,6 @@ function HandIn({ round }: { round: RoundDetail }) {
 
 export default function RoundPage() {
   const { id } = useParams<{ id: string }>();
-  const canEnter = useCan("enter_money");
-  const canAllow = useCan("allow_exception");
   const round = useGet<RoundDetail>(`/v1/rounds/${id}`);
   const rate = useRateToday();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -196,7 +194,7 @@ export default function RoundPage() {
   if (round.data === undefined) return <Loading what="Opening the round" />;
   const r = round.data;
   const planned = r.status === "planned";
-  const editable = canEnter && !planned;
+  const editable = !planned;
   const todayRate = rate.data?.rate?.iqdPer100Usd ?? null;
   const files = [...new Set(r.stopList.map((stop) => stop.shipmentCode))];
 
@@ -269,7 +267,7 @@ export default function RoundPage() {
           </span>
         }
       >
-        {planned && canEnter ? (
+        {planned ? (
           <>
             <Button onClick={() => setDoing({ kind: "add" })}>Add goods</Button>
             <Button tone="primary" busy={depart.saving} disabled={r.stops === 0} onClick={() => void depart.save(null)}>
@@ -400,13 +398,13 @@ export default function RoundPage() {
                         )}
                       </Td>
                       <Td right className="whitespace-nowrap">
-                        {planned && canEnter ? (
+                        {planned ? (
                           <button type="button" className="text-[13px] font-semibold text-red hover:underline" onClick={() => void removeStop.save(stop.consignmentId)}>
                             Take off
                           </button>
                         ) : null}
                         {stop.hasException ? <Chip tone="amber">Allowed, chase him</Chip> : null}
-                        {stop.missedCollection && canAllow ? (
+                        {stop.missedCollection ? (
                           <button type="button" className="text-[13px] font-semibold text-red hover:underline" onClick={() => setDoing({ kind: "exception", stop })}>
                             Allow it
                           </button>
@@ -458,7 +456,7 @@ export default function RoundPage() {
                   : "Note by note, per currency. It is checked against the receipts entered above."
               }
             />
-            {canEnter ? <HandIn round={r} /> : <p className="px-5 py-4 text-sm text-muted">The CEO counts the cash in.</p>}
+            <HandIn round={r} />
           </Card>
 
           <div className="flex flex-col gap-5">
@@ -480,7 +478,7 @@ export default function RoundPage() {
                     <li key={handIn.id} className={`px-5 py-3 text-sm ${handIn.voided ? "text-faint line-through" : ""}`}>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-[13px] text-muted">{dayTime(handIn.happenedAt)}</span>
-                        {canEnter && !handIn.voided ? (
+                        {!handIn.voided ? (
                           <button type="button" className="text-[13px] text-muted hover:text-red hover:underline" onClick={() => setDoing({ kind: "voidHandIn", handInId: handIn.id })}>
                             Take back
                           </button>

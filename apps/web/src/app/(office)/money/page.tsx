@@ -9,7 +9,7 @@ import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, Segmented, Select, Table, Td, Textarea, Th } from "@/components/ui";
 import { WalletsCard } from "@/components/wallets";
 import { api } from "@/lib/api";
-import { useCan, useGet, useRateToday, useSave } from "@/lib/hooks";
+import { useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CASH_OUT, dayTime, METHOD } from "@/lib/labels";
 import { formatMoney, formatRate, formatRatePerDollar, iqdToUsdCents, parseAmount, parseRate } from "@/lib/money";
 
@@ -17,7 +17,7 @@ import { formatMoney, formatRate, formatRatePerDollar, iqdToUsdCents, parseAmoun
 // Today's rate
 // ---------------------------------------------------------------------------
 
-function RateCard({ canSet }: { canSet: boolean }) {
+function RateCard() {
   const today = useRateToday();
   const toast = useToast();
   const [typed, setTyped] = useState("");
@@ -36,7 +36,7 @@ function RateCard({ canSet }: { canSet: boolean }) {
 
   if (today.data === undefined) return <Loading />;
   const current = today.data.rate;
-  const showForm = canSet && (current === null || editing);
+  const showForm = current === null || editing;
 
   return (
     <Card>
@@ -51,7 +51,7 @@ function RateCard({ canSet }: { canSet: boolean }) {
                 <span className="num">{formatRatePerDollar(current.iqdPer100Usd)}</span> per $1 · set by {current.setBy}, {dayTime(current.setAt)}
               </span>
             </p>
-            {canSet && !editing ? (
+            {!editing ? (
               <Button small onClick={() => setEditing(true)}>
                 Change
               </Button>
@@ -343,8 +343,6 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 function MoneyScreen() {
-  const canEnter = useCan("enter_money");
-  const canReverse = useCan("reverse");
   const customerId = useSearchParams().get("customer");
   const preset = useGet<CustomerDetail>(customerId === null ? null : `/v1/customers/${customerId}`);
   const [tab, setTab] = useState<Tab>("payment");
@@ -357,16 +355,14 @@ function MoneyScreen() {
       <PageHead title="Money" hint="What comes in at the office and what goes out of the vault. Money collected on a round is entered on the round." />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
         <div className="flex flex-col gap-5">
-          <RateCard canSet={canEnter} />
-          {canEnter ? (
-            <Card>
-              <div className="border-b border-rule px-5 py-3.5">
-                <Segmented label="What is being entered" value={tab} onChange={setTab} options={TABS} />
-              </div>
-              {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : <ExchangeForm />}
-            </Card>
-          ) : null}
-          <WalletsCard canCheck={canEnter} />
+          <RateCard />
+          <Card>
+            <div className="border-b border-rule px-5 py-3.5">
+              <Segmented label="What is being entered" value={tab} onChange={setTab} options={TABS} />
+            </div>
+            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : <ExchangeForm />}
+          </Card>
+          <WalletsCard />
         </div>
 
         <div className="flex flex-col gap-5">
@@ -409,11 +405,11 @@ function MoneyScreen() {
                           <Link href={`/rounds/${p.roundId}`} className="text-[13px] text-muted hover:text-green hover:underline">
                             On a round
                           </Link>
-                        ) : canReverse ? (
+                        ) : (
                           <button type="button" className="text-[13px] text-muted hover:text-red hover:underline" onClick={() => setReversing({ entryId: p.entryId, what: `${p.customerName}'s payment` })}>
                             Reverse
                           </button>
-                        ) : null}
+                        )}
                       </Td>
                     </tr>
                   ))}
@@ -452,11 +448,11 @@ function MoneyScreen() {
                       <Td right>
                         {c.reversed ? (
                           <span className="text-[12px]">reversed</span>
-                        ) : canReverse ? (
+                        ) : (
                           <button type="button" className="text-[13px] text-muted hover:text-red hover:underline" onClick={() => setReversing({ entryId: c.entryId, what: `this cash out` })}>
                             Reverse
                           </button>
-                        ) : null}
+                        )}
                       </Td>
                     </tr>
                   ))}

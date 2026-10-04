@@ -5,7 +5,7 @@
 // cannot sign anyone in.
 
 import { createHash, randomBytes } from "node:crypto";
-import { CAN, type Me, type Role, type User } from "@green-star/contracts";
+import type { Me, User } from "@green-star/contracts";
 import { normalizePhone } from "@green-star/domain";
 import type { Queryable } from "../db.ts";
 
@@ -14,11 +14,8 @@ export const SESSION_COOKIE = "gs_session";
 /** The longest a browser keeps a cookie. The database decides when a session really ends. */
 export const COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60;
 
-/**
- * A session ends when it has not been used for this many days. The office
- * screen stays signed in: nobody is there to type its password again.
- */
-export const IDLE_DAYS: Readonly<Record<Role, number>> = { ceo: 14, owner: 14, monitor: 400 };
+/** A session ends when it has not been used for this many days. */
+export const IDLE_DAYS = 14;
 
 /** "Last seen" is written at most this often, so reading a screen is not a write every time. */
 const TOUCH_AFTER_MS = 5 * 60 * 1000;
@@ -34,7 +31,7 @@ export function newToken(): { token: string; hash: Buffer } {
 
 /**
  * What was typed in the phone field, as the database stores it: a phone in
- * international form, or the office monitor's sign-in name.
+ * international form. Anything else is kept as typed, and matches no account.
  */
 export function signInKey(typed: string): string {
   return normalizePhone(typed) ?? typed.trim().toLowerCase();
@@ -44,14 +41,12 @@ export interface UserRow {
   [key: string]: unknown;
   id: string;
   name: string;
-  role: Role;
-  phone: string | null;
-  sign_in_name: string | null;
+  phone: string;
   active: boolean;
 }
 
 export function toUser(row: UserRow): User {
-  return { id: row.id, name: row.name, role: row.role, phone: row.phone, signInName: row.sign_in_name, active: row.active };
+  return { id: row.id, name: row.name, phone: row.phone, active: row.active };
 }
 
 /** Who is making this request. */
@@ -64,7 +59,6 @@ export interface Auth {
 export function toMe(auth: Auth): Me {
   return {
     user: auth.user,
-    can: [...CAN[auth.user.role]],
     session: { id: auth.sessionId, expiresAt: auth.expiresAt.toISOString() },
   };
 }
@@ -80,7 +74,7 @@ export async function createSession(
     `insert into sessions (user_id, token_hash, device, ip, expires_at)
      values ($1, $2, $3, $4, now() + make_interval(days => $5))
      returning id, expires_at`,
-    [user.id, hash, device?.slice(0, 300) ?? null, ip, IDLE_DAYS[user.role]],
+    [user.id, hash, device?.slice(0, 300) ?? null, ip, IDLE_DAYS],
   );
   if (row === undefined) throw new Error("the session was not created");
   return { token, auth: { user, sessionId: row.id, expiresAt: row.expires_at } };
@@ -100,7 +94,7 @@ export async function findSession(q: Queryable, token: string): Promise<Auth | n
   if (token.length < 20 || token.length > 100) return null;
   const row = await q.first<SessionRow>(
     `select s.id as session_id, s.last_seen_at, s.expires_at,
-            u.id, u.name, u.role, u.phone, u.sign_in_name, u.active
+            u.id, u.name, u.phone, u.active
      from sessions s join users u on u.id = s.user_id
      where s.token_hash = $1 and s.revoked_at is null and s.expires_at > now() and u.active`,
     [hashToken(token)],
@@ -112,7 +106,7 @@ export async function findSession(q: Queryable, token: string): Promise<Auth | n
     const touched = await q.first<{ expires_at: Date }>(
       `update sessions set last_seen_at = now(), expires_at = now() + make_interval(days => $2)
        where id = $1 and revoked_at is null returning expires_at`,
-      [row.session_id, IDLE_DAYS[row.role]],
+      [row.session_id, IDLE_DAYS],
     );
     if (touched !== undefined) expiresAt = touched.expires_at;
   }

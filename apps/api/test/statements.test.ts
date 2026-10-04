@@ -12,9 +12,8 @@ import { Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, await seedUser(h, "owner"));
 await s.rate();
 
 const BAGHDAD_MS = 3 * 3_600_000;
@@ -85,7 +84,7 @@ test("a statement is every charge and payment in order, each with the balance af
   assert.equal((await s.get(`/v1/customers/${customer}/statement?from=yesterday`)).status, 400);
   assert.equal((await s.get(`/v1/customers/${customer}/statement?corrections=maybe`)).status, 400);
   assert.equal((await s.get(`/v1/customers/${randomUUID()}/statement`)).status, 404);
-  assert.equal((await s.get(`/v1/customers/${customer}/statement`, ownerCookie)).status, 200);
+  assert.equal((await s.get(`/v1/customers/${customer}/statement`)).status, 200);
 });
 
 test("a payment taken back is left off with its reversal, unless corrections are asked for", async () => {
@@ -266,24 +265,19 @@ test("a long account: the copy to send shows the latest 40 lines and sums the re
   assert.equal((await bytes(h, made.body.imageUrl)).status, 200);
 });
 
-test("the owner reads statements and the copies made, and makes none", async () => {
+test("nobody who is not signed in reads a statement, makes one or marks one sent", async () => {
   const customer = await s.customer();
   await s.file([[customer, 3_000]]);
   const made = await exportFor(customer);
 
-  assert.equal((await s.get(`/v1/customers/${customer}/statement`, ownerCookie)).status, 200);
-  assert.equal((await s.get(`/v1/customers/${customer}/statements`, ownerCookie)).body.items.length, 1);
-  assert.equal((await s.get(`/v1/statements/${made.body.id}`, ownerCookie)).status, 200);
-  assert.equal((await bytes(h, made.body.imageUrl, ownerCookie)).status, 200);
-  assert.equal((await s.get("/v1/statements", ownerCookie)).status, 200);
-
-  const refused = await call(h.app, "POST", `/v1/customers/${customer}/statement/export`, { cookie: ownerCookie, body: { id: randomUUID() } });
-  assert.equal(refused.status, 403);
-  assert.equal((await call(h.app, "POST", `/v1/statements/${made.body.id}/sent`, { cookie: ownerCookie, body: {} })).status, 403);
+  assert.equal((await s.get(`/v1/customers/${customer}/statements`)).body.items.length, 1);
+  for (const url of [made.body.imageUrl, made.body.pdfUrl, `/v1/statements/${made.body.id}`, `/v1/customers/${customer}/statement`, `/v1/customers/${customer}/statements`, "/v1/statements"]) {
+    assert.equal((await call(h.app, "GET", url)).status, 401, url);
+  }
+  assert.equal((await call(h.app, "POST", `/v1/customers/${customer}/statement/export`, { body: { id: randomUUID() } })).status, 401);
+  assert.equal((await call(h.app, "POST", `/v1/statements/${made.body.id}/sent`, { body: {} })).status, 401);
+  assert.equal((await s.get(`/v1/customers/${customer}/statements`)).body.items.length, 1);
   assert.equal((await s.get(`/v1/statements/${made.body.id}`)).body.sentAt, null);
-  // Nobody who is not signed in reads a statement or its image.
-  assert.equal((await call(h.app, "GET", made.body.imageUrl)).status, 401);
-  assert.equal((await call(h.app, "GET", `/v1/customers/${customer}/statement`)).status, 401);
 });
 
 test("who to send a statement to: trusted customers who owe, until one was sent this week", async () => {

@@ -1,5 +1,5 @@
-// Checks and alerts, the Today screen, the wallet check, the settings and the
-// office monitor, over the real routes against a real Postgres.
+// Checks and alerts, the Today screen, the wallet check and the settings,
+// over the real routes against a real Postgres.
 
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,10 +10,8 @@ import { result, Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, await seedUser(h, "owner"));
-const monitorCookie = await signIn(h, await seedUser(h, "monitor"));
 await s.rate();
 
 const now = () => new Date().toISOString();
@@ -86,8 +84,6 @@ test("the driver forgot to collect: the alert is there the moment the round is s
   await s.driver();
   await s.customer();
   assert.equal(about(await alerts(), "missed_collection", consignment).length, 1);
-  // The owner sees it too.
-  assert.equal(about(await alerts("open", "", ownerCookie), "missed_collection", consignment).length, 1);
 });
 
 test("the CEO resolves an alert with a note; it stays resolved while the same thing is still wrong", async () => {
@@ -100,8 +96,8 @@ test("the CEO resolves an alert with a note; it stays resolved while the same th
   assert.equal(noNote.body.fields.note !== undefined, true);
   assert.equal((await s.send("POST", url, { note: "   " })).status, 400);
   assert.equal((await s.send("POST", url, { note: "x", status: "cleared" })).status, 400, "nothing but a note is taken");
-  const owner = await call(h.app, "POST", url, { cookie: ownerCookie, body: { note: "I will handle it" } });
-  assert.equal(owner.status, 403);
+  const nobody = await call(h.app, "POST", url, { body: { note: "I will handle it" } });
+  assert.equal(nobody.status, 401);
   const missing = await s.send("POST", `/v1/alerts/${randomUUID()}/resolve`, { note: "x" });
   assert.equal(missing.status, 404);
   assert.equal(missing.body.code, "alert_not_found");
@@ -309,10 +305,6 @@ test("Today: what the rounds went out to collect, what they took, and what was c
   assert.equal(paid.officePaymentsUsdCents - officeBefore, 2_000);
   assert.equal(paid.collectedUsdCents, counted.collectedUsdCents, "paying at the office is not the round collecting");
 
-  // The owner reads the same screen. The monitor does not.
-  assert.equal((await s.get("/v1/reports/today", ownerCookie)).status, 200);
-  assert.equal((await s.get("/v1/reports/today", monitorCookie)).status, 403);
-  assert.equal((await s.get("/v1/alerts", monitorCookie)).status, 403);
   await s.sound();
 });
 
@@ -371,20 +363,21 @@ test("a wallet is checked against its app: a gap needs a note and raises an aler
   assert.equal(exact.body.checks[0].difference, 0);
   assert.equal((await alerts("open", "&kind=wallet_gap")).length, gapsBefore);
 
-  assert.equal((await s.get("/v1/wallets", ownerCookie)).status, 200);
-  assert.equal((await call(h.app, "POST", "/v1/wallets/checks", { cookie: ownerCookie, body: { id: randomUUID(), wallet: "wallet_fib_usd", appBalance: 0, note: "x" } })).status, 403);
+  assert.equal((await call(h.app, "POST", "/v1/wallets/checks", { body: { id: randomUUID(), wallet: "wallet_fib_usd", appBalance: 0, note: "x" } })).status, 401);
   await s.sound();
 });
+
+/** Everything GET /v1/settings sends. */
+const SETTINGS = ["heldInCarDays", "updatedAt", "vaultCloseTime", "walletCheckDays"];
 
 test("the settings are the CEO's to change, and every change is on record", async () => {
   const read = await s.get("/v1/settings");
   assert.equal(read.status, 200);
   assert.deepEqual(
-    [read.body.heldInCarDays, read.body.vaultCloseTime, read.body.walletCheckDays, read.body.monitorWidgets],
-    [3, "18:00", 7, ["files", "rounds", "held"]],
+    [read.body.heldInCarDays, read.body.vaultCloseTime, read.body.walletCheckDays],
+    [3, "18:00", 7],
   );
-  assert.deepEqual((await s.get("/v1/settings", ownerCookie)).body, read.body);
-  assert.equal((await s.get("/v1/settings", monitorCookie)).status, 403);
+  assert.deepEqual(Object.keys(read.body).sort(), SETTINGS);
 
   for (const bad of [
     {},
@@ -395,14 +388,13 @@ test("the settings are the CEO's to change, and every change is on record", asyn
     { vaultCloseTime: "6pm" },
     { vaultCloseTime: "24:00" },
     { vaultCloseTime: "18:60" },
-    { monitorWidgets: ["files", "money"] },
-    { monitorWidgets: ["files", "files"] },
+    { monitorWidgets: ["files"] },   // the office screen is gone, and so is what it showed
     { heldInCarDays: 4, somethingElse: true },
   ]) {
     const reply = await s.send("PUT", "/v1/settings", bad);
     assert.equal(reply.status, 400, JSON.stringify(bad));
   }
-  assert.equal((await call(h.app, "PUT", "/v1/settings", { cookie: ownerCookie, body: { heldInCarDays: 5 } })).status, 403);
+  assert.equal((await call(h.app, "PUT", "/v1/settings", { body: { heldInCarDays: 5 } })).status, 401);
   assert.deepEqual((await s.get("/v1/settings")).body, read.body, "nothing changed");
 
   const logged = async () => (await h.owner.query("select count(*)::int as n from audit_log where entity = 'settings'")).rows[0].n as number;
@@ -410,8 +402,8 @@ test("the settings are the CEO's to change, and every change is on record", asyn
   const changed = await s.send("PUT", "/v1/settings", { heldInCarDays: 5, vaultCloseTime: "17:30" });
   assert.equal(changed.status, 200, JSON.stringify(changed.body));
   assert.deepEqual(
-    [changed.body.heldInCarDays, changed.body.vaultCloseTime, changed.body.walletCheckDays, changed.body.monitorWidgets],
-    [5, "17:30", 7, ["files", "rounds", "held"]],
+    [changed.body.heldInCarDays, changed.body.vaultCloseTime, changed.body.walletCheckDays],
+    [5, "17:30", 7],
   );
   assert.equal(await logged(), before + 1);
   const { rows } = await h.owner.query(
@@ -422,75 +414,14 @@ test("the settings are the CEO's to change, and every change is on record", asyn
   // Only what is sent changes. Everything else stays as it was set.
   const one = await s.send("PUT", "/v1/settings", { walletCheckDays: 9 });
   assert.deepEqual(
-    [one.body.heldInCarDays, one.body.vaultCloseTime, one.body.walletCheckDays, one.body.monitorWidgets],
-    [5, "17:30", 9, ["files", "rounds", "held"]],
+    [one.body.heldInCarDays, one.body.vaultCloseTime, one.body.walletCheckDays],
+    [5, "17:30", 9],
   );
-  const widgets = await s.send("PUT", "/v1/settings", { monitorWidgets: ["rounds"] });
-  assert.deepEqual([widgets.body.heldInCarDays, widgets.body.vaultCloseTime, widgets.body.walletCheckDays, widgets.body.monitorWidgets], [5, "17:30", 9, ["rounds"]]);
+  const time = await s.send("PUT", "/v1/settings", { vaultCloseTime: "19:15" });
+  assert.deepEqual([time.body.heldInCarDays, time.body.vaultCloseTime, time.body.walletCheckDays], [5, "19:15", 9]);
 
-  const back = await s.send("PUT", "/v1/settings", { heldInCarDays: 3, vaultCloseTime: "18:00", walletCheckDays: 7, monitorWidgets: ["files", "rounds", "held"] });
-  assert.deepEqual([back.body.heldInCarDays, back.body.vaultCloseTime, back.body.walletCheckDays, back.body.monitorWidgets], [3, "18:00", 7, ["files", "rounds", "held"]]);
-});
-
-test("the office monitor shows the chosen widgets, in the chosen order, and no money", async () => {
-  const waitingName = unique("SCREEN HELD ");
-  const waiting = await s.customer(waitingName);
-  const going = await s.customer(unique("SCREEN OUT "));
-  const file = await s.file([[waiting, 4_000], [going, 6_000]]);
-  const first = await s.roundOut([file.by[waiting] as string]);
-  await s.send("PUT", `/v1/rounds/${first}/results`, { results: [result(file.by[waiting] as string, "held")] });
-  const second = await s.roundOut([file.by[going] as string]);
-  const secondNumber = (await s.get(`/v1/rounds/${second}`)).body.number;
-  const driverName = (await s.get(`/v1/rounds/${second}`)).body.driverName;
-
-  const screen = await s.get("/v1/monitor", monitorCookie);
-  assert.equal(screen.status, 200, JSON.stringify(screen.body));
-  assert.deepEqual(screen.body.widgets, ["files", "rounds", "held"]);
-  assert.ok(!Number.isNaN(Date.parse(screen.body.at)));
-
-  const onScreen = screen.body.files.find((f: { code: string }) => f.code === file.code);
-  assert.deepEqual(onScreen, { code: file.code, status: "on_rounds", consignments: 2, delivered: 0 });
-  const round = screen.body.rounds.find((r: { number: number }) => r.number === secondNumber);
-  assert.deepEqual([round.status, round.carriedBy, round.stops, round.done], ["out", driverName, 1, 0]);
-  assert.ok(!Number.isNaN(Date.parse(round.leftAt)));
-  const held = screen.body.held.find((x: { customerName: string }) => x.customerName === waitingName);
-  assert.equal(held.shipmentCode, file.code);
-  assert.ok(!Number.isNaN(Date.parse(held.heldSince)));
-
-  // No money, anywhere on it, whatever is added to the lists it reads from.
-  const keys = new Set<string>();
-  const walk = (value: unknown): void => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (value !== null && typeof value === "object") {
-      for (const [key, inner] of Object.entries(value)) {
-        keys.add(key);
-        walk(inner);
-      }
-    }
-  };
-  walk(screen.body);
-  assert.deepEqual(
-    [...keys].sort(),
-    ["at", "carriedBy", "city", "code", "consignments", "customerName", "delivered", "done", "files", "heldSince", "held", "leftAt", "number", "rounds", "shipmentCode", "status", "stops", "widgets"].sort(),
-  );
-
-  // The CEO and the owner can look at what the screen shows.
-  assert.equal((await s.get("/v1/monitor")).status, 200);
-  assert.equal((await s.get("/v1/monitor", ownerCookie)).status, 200);
-
-  // The CEO picks what it shows, and in what order. A widget that is off is not sent at all.
-  await s.send("PUT", "/v1/settings", { monitorWidgets: ["held", "rounds"] });
-  const fewer = (await s.get("/v1/monitor", monitorCookie)).body;
-  assert.deepEqual(fewer.widgets, ["held", "rounds"]);
-  assert.deepEqual(Object.keys(fewer).sort(), ["at", "held", "rounds", "widgets"]);
-  await s.send("PUT", "/v1/settings", { monitorWidgets: [] });
-  assert.deepEqual(Object.keys((await s.get("/v1/monitor", monitorCookie)).body).sort(), ["at", "widgets"]);
-  await s.send("PUT", "/v1/settings", { monitorWidgets: ["files", "rounds", "held"] });
-
-  // The monitor reads its screen and nothing else.
-  for (const url of ["/v1/customers", "/v1/shipments", "/v1/rounds", "/v1/payments", "/v1/vault", "/v1/wallets", "/v1/settings", "/v1/alerts/count"]) {
-    assert.equal((await s.get(url, monitorCookie)).status, 403, url);
-  }
+  const back = await s.send("PUT", "/v1/settings", { heldInCarDays: 3, vaultCloseTime: "18:00", walletCheckDays: 7 });
+  assert.deepEqual([back.body.heldInCarDays, back.body.vaultCloseTime, back.body.walletCheckDays], [3, "18:00", 7]);
 });
 
 test("the checks never failed, and the books are sound", async () => {

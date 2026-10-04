@@ -4,7 +4,8 @@
 //
 // It asks for the password without showing it. Run it where the system is
 // hosted: it uses DATABASE_URL, the login that owns the database, because
-// nobody is signed in yet. Every other account is added by the CEO in the app.
+// nobody is signed in yet. It is the only way an account is made: the system
+// is the CEO's alone, and no screen adds one.
 
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
@@ -73,7 +74,7 @@ try {
     id = (made.rows[0] as { id: string }).id;
     did = "Created the CEO's account";
   } else if (row.role !== "ceo") {
-    throw new Error(`${phone} already belongs to the ${row.role}'s account. Nothing was saved.`);
+    throw new Error(`${phone} belongs to an old ${row.role} account, which was switched off for good. Use another phone number. Nothing was saved.`);
   } else {
     id = row.id;
     await client.query("update users set name = $2, active = true where id = $1", [id, name]);

@@ -1,14 +1,13 @@
-// Who may call what. Every address in the API is tried as every role, so an
-// address added later is covered the day it is added.
+// Who may call what. Every address in the API is tried signed out and signed
+// in, so an address added later is covered the day it is added.
 
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { ROLES } from "@green-star/contracts";
 import Fastify from "fastify";
 import { buildApp } from "../src/app.ts";
 import { Db } from "../src/db.ts";
-import { call, config, everyRole, PASSWORD, seedUser, signIn, start } from "./helpers.ts";
+import { call, config, PASSWORD, seedUser, signedIn, signIn, start } from "./helpers.ts";
 
 const h = await start();
 after(() => h.close());
@@ -16,29 +15,26 @@ after(() => h.close());
 /** The address with a real-looking id in place of each :name. */
 const concrete = (url: string) => url.replace(/:[a-zA-Z]+/g, () => randomUUID());
 
-test("every address says who may call it", () => {
-  assert.ok(h.app.routeList.length >= 69, `only ${h.app.routeList.length} addresses`);
+test("every address says who may call it: open before signing in, or the CEO signed in", () => {
+  assert.ok(h.app.routeList.length >= 66, `only ${h.app.routeList.length} addresses`);
   for (const route of h.app.routeList) {
-    assert.ok(route.access === "public" || (Array.isArray(route.access) && route.access.length > 0), `${route.method} ${route.url}`);
+    assert.ok(route.access === "public" || route.access === "signed_in", `${route.method} ${route.url}: ${String(route.access)}`);
   }
   const open = h.app.routeList.filter((r) => r.access === "public").map((r) => `${r.method} ${r.url}`).sort();
-  assert.deepEqual(open, ["GET /healthz", "POST /v1/auth/login", "POST /v1/auth/logout"], "nothing else is open to everyone");
+  assert.deepEqual(open, ["GET /healthz", "POST /v1/auth/login", "POST /v1/auth/logout"], "nothing else is open before signing in");
 });
 
-test("the owner only reads, the monitor sees only its own screen, and every change is the CEO's", () => {
-  const who = (route: { access: unknown }) => (route.access === "public" ? "public" : [...(route.access as string[])].sort().join(","));
-  const exceptions: Record<string, string> = {
-    "GET /v1/me": "ceo,monitor,owner",          // everyone may ask who he is
-    "GET /v1/users": "ceo",                     // accounts and devices are the CEO's business
-    "POST /v1/auth/password": "ceo,owner",      // changing your own password
-    "GET /v1/monitor": "ceo,monitor,owner",     // the office screen, and the CEO looking at what it shows
-  };
-  for (const route of h.app.routeList) {
-    if (route.access === "public") continue;
-    const name = `${route.method} ${route.url}`;
-    const expected = exceptions[name] ?? (route.method === "GET" ? "ceo,owner" : "ceo");
-    assert.equal(who(route), expected, name);
-  }
+test("there is one kind of account: nothing names a role, and nothing is left for another one", async () => {
+  const urls = h.app.routeList.map((r) => r.url);
+  for (const gone of ["/v1/monitor", "/v1/users/:id"]) assert.ok(!urls.includes(gone), gone);
+  assert.ok(!h.app.routeList.some((r) => r.method === "POST" && r.url === "/v1/users"), "no account is added from the app");
+
+  const ceo = await signedIn(h);
+  const me = await call(h.app, "GET", "/v1/me", { cookie: ceo.cookie });
+  assert.deepEqual(Object.keys(me.body).sort(), ["session", "user"]);
+  assert.deepEqual(Object.keys(me.body.user).sort(), ["active", "id", "name", "phone"]);
+  const roles = await h.owner.query("select distinct role::text as role from users");
+  assert.deepEqual(roles.rows.map((r) => r.role), ["ceo"]);
 });
 
 test("an address that forgets to say who may call it stops the API from starting", async () => {
@@ -56,35 +52,37 @@ test("an address that forgets to say who may call it stops the API from starting
   await db.close();
 });
 
-test("each address answers only the roles it names, and nobody who is not signed in", async () => {
-  const roles = await everyRole(h);
+test("each address answers the CEO signed in, and nobody else", async () => {
+  const ceo = await signedIn(h);
+  // He was signed in once and is not any more: signed out, switched off, or the session ran out.
+  const signedOut = await signedIn(h, "Signed out");
+  assert.equal((await call(h.app, "POST", "/v1/auth/logout", { cookie: signedOut.cookie })).status, 204);
+  const switchedOff = await signedIn(h, "Switched off");
+  await h.owner.query("update users set active = false where id = $1", [switchedOff.user.id]);
+  const ranOut = await signedIn(h, "Ran out");
+  await h.owner.query("update sessions set expires_at = now() - interval '1 second' where user_id = $1", [ranOut.user.id]);
+
   let checked = 0;
   for (const route of h.app.routeList) {
     if (route.access === "public") continue;
     const url = concrete(route.url);
     const body = route.method === "GET" || route.method === "DELETE" ? undefined : {};
 
-    const nobody = await call(h.app, route.method, url, { body });
-    assert.equal(nobody.status, 401, `${route.method} ${route.url} without a session`);
-    assert.equal(nobody.body.code, "not_signed_in");
-
-    for (const role of ROLES) {
-      const reply = await call(h.app, route.method, url, { body, cookie: roles[role].cookie });
-      const allowed = (route.access as readonly string[]).includes(role);
-      if (allowed) {
-        assert.ok(reply.status !== 401 && reply.status !== 403, `${route.method} ${route.url} should answer the ${role}, got ${reply.status}`);
-      } else {
-        assert.equal(reply.status, 403, `${route.method} ${route.url} should refuse the ${role}`);
-        assert.deepEqual(reply.body, { code: "not_allowed", message: "Your account cannot do this" });
-      }
+    for (const [who, cookie] of [["nobody", null], ["a made-up session", `gs_session=${"x".repeat(43)}`], ["a session that was signed out", signedOut.cookie], ["an account that was switched off", switchedOff.cookie], ["a session that ran out", ranOut.cookie]] as const) {
+      const reply = await call(h.app, route.method, url, { body, cookie });
+      assert.equal(reply.status, 401, `${route.method} ${route.url} as ${who}`);
+      assert.deepEqual(reply.body, { code: "not_signed_in", message: "Sign in first" });
       checked += 1;
     }
+    const reply = await call(h.app, route.method, url, { body, cookie: ceo.cookie });
+    assert.ok(reply.status !== 401 && reply.status !== 403, `${route.method} ${route.url} should answer the CEO, got ${reply.status}`);
+    checked += 1;
   }
-  assert.ok(checked >= 170, `only ${checked} role checks`);
+  assert.ok(checked >= 370, `only ${checked} checks`);
 });
 
 test("every write needs its own key, so a double click on Save is done once", async () => {
-  const roles = await everyRole(h);
+  const roles = { ceo: await signedIn(h) };
   let checked = 0;
   for (const route of h.app.routeList) {
     if (route.access === "public" || route.method === "GET" || route.url === "/v1/auth/password") continue;
@@ -103,7 +101,7 @@ test("every write needs its own key, so a double click on Save is done once", as
   const body = { name: "Keyed customer" };
   const first = await call(h.app, "POST", "/v1/customers", { cookie: roles.ceo.cookie, body, key });
   assert.equal(first.status, 201);
-  const second = await seedUser(h, "ceo", "Another CEO");
+  const second = await seedUser(h, "Another account");
   const stolen = await call(h.app, "POST", "/v1/customers", { cookie: await signIn(h, second), body, key });
   assert.equal(stolen.status, 422);
   assert.equal(stolen.body.code, "idempotency_key_reused");
@@ -115,36 +113,8 @@ test("every write needs its own key, so a double click on Save is done once", as
   assert.equal((await call(h.app, "POST", "/v1/customers", { cookie: roles.ceo.cookie, body: { name: "Fixed" }, key: retry })).status, 201);
 });
 
-test("the owner and the monitor cannot touch users or devices", async () => {
-  const roles = await everyRole(h);
-  const victim = await seedUser(h, "owner", "Victim");
-  const victimCookie = await signIn(h, victim);
-  const victimSession = (await call(h.app, "GET", "/v1/me", { cookie: victimCookie })).body.session.id;
-
-  // Refused by the API itself, before the request reaches the database (which would refuse it too).
-  const refusedByTheApi = async (cookie: string, method: string, url: string, body?: unknown) => {
-    const reply = await call(h.app, method, url, { cookie, body });
-    assert.equal(reply.status, 403, `${method} ${url}`);
-    assert.equal(reply.body.code, "not_allowed", `${method} ${url}`);
-  };
-  for (const role of ["owner", "monitor"] as const) {
-    const cookie = roles[role].cookie;
-    await refusedByTheApi(cookie, "GET", "/v1/users");
-    await refusedByTheApi(cookie, "POST", "/v1/users", { role: "owner", name: "Friend", phone: "0750 111 2233", password: PASSWORD });
-    await refusedByTheApi(cookie, "PATCH", `/v1/users/${victim.id}`, { active: false });
-    await refusedByTheApi(cookie, "PATCH", `/v1/users/${roles.ceo.user.id}`, { password: "taken over now" });
-    await refusedByTheApi(cookie, "DELETE", `/v1/sessions/${victimSession}`);
-  }
-  // The monitor cannot change its own password either: it is a screen.
-  await refusedByTheApi(roles.monitor.cookie, "POST", "/v1/auth/password", { current: PASSWORD, next: "something else" });
-
-  assert.equal((await call(h.app, "GET", "/v1/me", { cookie: victimCookie })).status, 200, "nothing happened to the victim");
-  assert.equal((await h.owner.query("select count(*)::int as n from users where name = 'Friend'")).rows[0].n, 0);
-  assert.equal((await call(h.app, "POST", "/v1/auth/login", { body: { phone: roles.ceo.user.phone, password: PASSWORD } })).status, 200);
-});
-
 test("an address that does not exist says so, in the same shape as every other error", async () => {
-  const roles = await everyRole(h);
+  const roles = { ceo: await signedIn(h) };
   for (const cookie of [null, roles.ceo.cookie]) {
     const reply = await call(h.app, "GET", "/v1/nothing-here", { cookie });
     assert.equal(reply.status, 404);
@@ -160,8 +130,11 @@ test("the uptime check answers without a session and says nothing about the busi
   assert.deepEqual(reply.body, { ok: true, database: true, checks: true });
 });
 
-test("whatever the API does, it cannot change the ledger without a CEO's name on the request", async () => {
-  const roles = await everyRole(h);
+test("whatever the API does, it cannot change the ledger without an active CEO's name on the request", async () => {
+  const ceo = (await signedIn(h)).user.id;
+  const other = (await signedIn(h, "Other")).user.id;
+  const off = (await signedIn(h, "Off")).user.id;
+  await h.owner.query("update users set active = false where id = $1", [off]);
   // Straight through the API's own database connection, the way a route would.
   const post = (actor: string | null, createdBy: string) =>
     h.db.write(actor, (q) =>
@@ -172,11 +145,11 @@ test("whatever the API does, it cannot change the ledger without a CEO's name on
         [createdBy, randomUUID()],
       ),
     );
-  const ceo = roles.ceo.user.id;
   await assert.rejects(post(null, ceo), /actor_required/);
-  await assert.rejects(post(roles.owner.user.id, ceo), /ceo_only/);
-  await assert.rejects(post(roles.monitor.user.id, roles.monitor.user.id), /ceo_only/);
-  await assert.rejects(post(ceo, roles.owner.user.id), /actor_mismatch/);
+  await assert.rejects(post(off, off), /actor_unknown/);
+  await assert.rejects(post(off, ceo), /actor_unknown/);
+  await assert.rejects(post(randomUUID(), ceo), /actor_unknown/);
+  await assert.rejects(post(ceo, other), /actor_mismatch/);
   assert.match(String(await post(ceo, ceo)), /^[0-9a-f-]{36}$/);
 
   // And a screen that only reads cannot write at all.

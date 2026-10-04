@@ -1,25 +1,24 @@
 // Money at the office.
 //
-//   GET  /v1/fx-rates/today           CEO, owner  Today's rate, and the last one set
-//   GET  /v1/fx-rates                 CEO, owner  Rates by day
-//   PUT  /v1/fx-rates/:day            CEO         Set a day's dinar rate ("today" or a date)
-//   GET  /v1/payments                 CEO, owner  Customer payments, with how each was paid
-//   POST /v1/payments                 CEO         Office or wallet payment, applied to the oldest unpaid
-//   GET  /v1/cash-outs                CEO, owner  Cash paid out of the vault
-//   POST /v1/cash-outs                CEO         China, driver pay, fuel and car, customs and airport, rent and salaries, other
-//   POST /v1/exchanges                CEO         Dinars changed into dollars, or back
-//   GET  /v1/vault                    CEO, owner  What should be in the box, the notes, and the last closes
-//   POST /v1/vault/close              CEO         Daily count by denomination per currency
-//   POST /v1/vault/closes/:id/void    CEO         Take a wrong count back
-//   POST /v1/entries/:id/reverse      CEO         Reverse a mistake with a reason
-//   GET  /v1/entries/:id              CEO, owner  One entry with its lines
-//   GET  /v1/ledger                   CEO, owner  Entries by account and date
-//   GET  /v1/accounts                 CEO, owner  Every account and what is on it
-//   GET  /v1/china-account            CEO, owner  Owed to China vs sent
+//   GET  /v1/fx-rates/today           Today's rate, and the last one set
+//   GET  /v1/fx-rates                 Rates by day
+//   PUT  /v1/fx-rates/:day            Set a day's dinar rate ("today" or a date)
+//   GET  /v1/payments                 Customer payments, with how each was paid
+//   POST /v1/payments                 Office or wallet payment, applied to the oldest unpaid
+//   GET  /v1/cash-outs                Cash paid out of the vault
+//   POST /v1/cash-outs                China, driver pay, fuel and car, customs and airport, rent and salaries, other
+//   POST /v1/exchanges                Dinars changed into dollars, or back
+//   GET  /v1/vault                    What should be in the box, the notes, and the last closes
+//   POST /v1/vault/close              Daily count by denomination per currency
+//   POST /v1/vault/closes/:id/void    Take a wrong count back
+//   POST /v1/entries/:id/reverse      Reverse a mistake with a reason
+//   GET  /v1/entries/:id              One entry with its lines
+//   GET  /v1/ledger                   Entries by account and date
+//   GET  /v1/accounts                 Every account and what is on it
+//   GET  /v1/china-account            Owed to China vs sent
 
 import {
   CashOutQuery,
-  CEO_ONLY,
   ChinaAccountQuery,
   IdParams,
   LedgerQuery,
@@ -29,7 +28,6 @@ import {
   PaymentQuery,
   RateDayParams,
   RateQuery,
-  READERS,
   ReverseRequest,
   SetRateRequest,
   VaultCloseRequest,
@@ -139,7 +137,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   // -- The day's rate -------------------------------------------------------
 
-  app.get("/fx-rates/today", { config: { access: READERS } }, async (): Promise<RateToday> => {
+  app.get("/fx-rates/today", { config: { access: "signed_in" } }, async (): Promise<RateToday> => {
     const day = baghdadDay(new Date());
     return read(ctx, async (q) => {
       const rate = await q.first(`${RATES} where f.day = $1::date`, [day]);
@@ -148,7 +146,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/fx-rates", { config: { access: READERS } }, async (request): Promise<{ items: Rate[] }> => {
+  app.get("/fx-rates", { config: { access: "signed_in" } }, async (request): Promise<{ items: Rate[] }> => {
     const query = parse(RateQuery, request.query);
     const rows = await read(ctx, (q) =>
       q.query(
@@ -159,7 +157,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     return { items: rows.map(toRate) };
   });
 
-  app.put("/fx-rates/:day", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Rate> => {
+  app.put("/fx-rates/:day", { config: { access: "signed_in" } }, async (request, reply): Promise<Rate> => {
     const params = parse(RateDayParams, request.params);
     const body = parse(SetRateRequest, request.body);
     const today = baghdadDay(new Date());
@@ -176,7 +174,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Payments -------------------------------------------------------------
 
-  app.get("/payments", { config: { access: READERS } }, async (request): Promise<Page<Payment>> => {
+  app.get("/payments", { config: { access: "signed_in" } }, async (request): Promise<Page<Payment>> => {
     const query = parse(PaymentQuery, request.query);
     const p = pager(query, "p.created_at", "p.entry_id::text");
     const params: unknown[] = [];
@@ -192,7 +190,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toPayment);
   });
 
-  app.post("/payments", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Payment> => {
+  app.post("/payments", { config: { access: "signed_in" } }, async (request, reply): Promise<Payment> => {
     const body = parse(NewPaymentRequest, request.body);
     const at = happened(body.happenedAt);
     const received = money(body.received.amount, body.received.currency);
@@ -217,7 +215,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Cash out and exchange ------------------------------------------------
 
-  app.get("/cash-outs", { config: { access: READERS } }, async (request): Promise<Page<CashOut>> => {
+  app.get("/cash-outs", { config: { access: "signed_in" } }, async (request): Promise<Page<CashOut>> => {
     const query = parse(CashOutQuery, request.query);
     const p = pager(query, "e.created_at", "c.entry_id::text");
     const params: unknown[] = [];
@@ -233,7 +231,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toCashOut);
   });
 
-  app.post("/cash-outs", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CashOut> => {
+  app.post("/cash-outs", { config: { access: "signed_in" } }, async (request, reply): Promise<CashOut> => {
     const body = parse(NewCashOutRequest, request.body);
     const at = happened(body.happenedAt);
     const amount = money(body.amount.amount, body.amount.currency);
@@ -248,7 +246,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/exchanges", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Entry> => {
+  app.post("/exchanges", { config: { access: "signed_in" } }, async (request, reply): Promise<Entry> => {
     const body = parse(NewExchangeRequest, request.body);
     const at = happened(body.happenedAt);
     return write(ctx, request, reply, async ({ q, auth, key }) => {
@@ -264,9 +262,9 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   // -- The vault ------------------------------------------------------------
 
-  app.get("/vault", { config: { access: READERS } }, async (): Promise<Vault> => read(ctx, vault));
+  app.get("/vault", { config: { access: "signed_in" } }, async (): Promise<Vault> => read(ctx, vault));
 
-  app.post("/vault/close", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Vault> => {
+  app.post("/vault/close", { config: { access: "signed_in" } }, async (request, reply): Promise<Vault> => {
     const body = parse(VaultCloseRequest, request.body);
     const at = happened(body.closedAt, "closedAt");
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -282,7 +280,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/vault/closes/:id/void", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Vault> => {
+  app.post("/vault/closes/:id/void", { config: { access: "signed_in" } }, async (request, reply): Promise<Vault> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(VoidRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -293,7 +291,7 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
 
   // -- The ledger -----------------------------------------------------------
 
-  app.post("/entries/:id/reverse", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Entry> => {
+  app.post("/entries/:id/reverse", { config: { access: "signed_in" } }, async (request, reply): Promise<Entry> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(ReverseRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth, key }) => {
@@ -303,14 +301,14 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/entries/:id", { config: { access: READERS } }, async (request): Promise<Entry> => {
+  app.get("/entries/:id", { config: { access: "signed_in" } }, async (request): Promise<Entry> => {
     const { id } = parse(IdParams, request.params);
     const [entry] = await read(ctx, (q) => entriesById(q, [id]));
     if (entry === undefined) throw notFound("That entry");
     return entry;
   });
 
-  app.get("/ledger", { config: { access: READERS } }, async (request): Promise<Page<Entry>> => {
+  app.get("/ledger", { config: { access: "signed_in" } }, async (request): Promise<Page<Entry>> => {
     const query = parse(LedgerQuery, request.query);
     const p = pager(query, "e.created_at", "e.id::text");
     const params: unknown[] = [];
@@ -343,14 +341,14 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/accounts", { config: { access: READERS } }, async (): Promise<{ items: Account[] }> => {
+  app.get("/accounts", { config: { access: "signed_in" } }, async (): Promise<{ items: Account[] }> => {
     const rows = await read(ctx, (q) =>
       q.query("select * from account_overview where kind <> 'customer' order by kind, code nulls last, name, account_id"),
     );
     return { items: rows.map((row) => camel<Account>(row, { account_id: "id" })) };
   });
 
-  app.get("/china-account", { config: { access: READERS } }, async (request): Promise<ChinaAccount> => {
+  app.get("/china-account", { config: { access: "signed_in" } }, async (request): Promise<ChinaAccount> => {
     const query = parse(ChinaAccountQuery, request.query);
     // Lines are paged by their place in the account, so "owed after" always
     // reads in order. The cursor is the place of the last line shown.

@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, LinkButton, Loading, Money, PageHead, Problem, ReadProblem, Select, Stat, Table, Td, Textarea, Th } from "@/components/ui";
 import { api } from "@/lib/api";
-import { useCan, useGet, useSave } from "@/lib/hooks";
+import { useGet, useSave } from "@/lib/hooks";
 import { CONSIGNMENT, day, dayTime, DISPUTE, DISPUTE_KIND, SHIPMENT, TRUST } from "@/lib/labels";
 import { amountForInput, formatMoney, parseAmount } from "@/lib/money";
 import { blockers } from "../page";
@@ -150,8 +150,6 @@ function Answer({ dispute, onClose }: { dispute: Dispute; onClose: () => void })
 
 export default function FilePage() {
   const { id } = useParams<{ id: string }>();
-  const canImport = useCan("import_files");
-  const canFix = useCan("reverse");
   const [doing, setDoing] = useState<Doing>(null);
   const file = useGet<ShipmentDetail>(`/v1/shipments/${id}`);
   const markSent = useSave((dispute: Dispute, key: string) => api.patch(`/v1/disputes/${dispute.id}`, { sentToChina: true }, key));
@@ -176,7 +174,7 @@ export default function FilePage() {
           </span>
         }
       >
-        {draft && canImport ? (
+        {draft ? (
           <>
             <LinkButton href={`/files/new?draft=${f.id}`}>Change the rows</LinkButton>
             <Button tone="primary" onClick={() => setDoing({ kind: "confirm" })}>
@@ -218,7 +216,7 @@ export default function FilePage() {
               <Th right>To collect</Th>
               <Th right>Paid</Th>
               <Th right>Still owed</Th>
-              {canFix && !draft ? <Th /> : null}
+              {!draft ? <Th /> : null}
             </tr>
           </thead>
           <tbody>
@@ -240,7 +238,7 @@ export default function FilePage() {
                   <Td right>{row.amountDueUsdCents === 0 ? <span className="text-[13px] text-muted">prepaid</span> : <Money amount={row.amountDueUsdCents} />}</Td>
                   <Td right>{draft ? "" : <Money amount={row.paidUsdCents} tone="muted" />}</Td>
                   <Td right>{draft ? "" : <Money amount={row.remainingUsdCents} tone={row.status === "delivered_not_paid" ? "red" : row.remainingUsdCents === 0 ? "muted" : undefined} className="font-medium" />}</Td>
-                  {canFix && !draft ? (
+                  {!draft ? (
                     <Td right className="whitespace-nowrap">
                       <button type="button" className="text-[13px] font-semibold text-green hover:underline" onClick={() => setDoing({ kind: "dispute", row })}>
                         Problem
@@ -282,7 +280,7 @@ export default function FilePage() {
                     {d.answeredAt ? ` · answered ${dayTime(d.answeredAt)}` : ""}
                   </p>
                 </div>
-                {canFix && d.status !== "closed" ? (
+                {d.status !== "closed" ? (
                   <div className="flex gap-2">
                     {d.status === "open" ? (
                       <Button small busy={markSent.saving} onClick={() => void markSent.save(d)}>

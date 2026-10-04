@@ -11,14 +11,14 @@
 
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
-import type { Access, Role } from "@green-star/contracts";
+import type { Access } from "@green-star/contracts";
 import Fastify, { LogController, type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { hashPassword } from "./auth/passwords.ts";
 import { findSession, SESSION_COOKIE, type Auth } from "./auth/sessions.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { ApiError, fromDatabase, invalidRequest, notAllowed, notSignedIn } from "./errors.ts";
+import { ApiError, fromDatabase, invalidRequest, notSignedIn } from "./errors.ts";
 import { Renderer } from "./render.ts";
 import { alertRoutes } from "./routes/alerts.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -36,7 +36,7 @@ declare module "fastify" {
     auth: Auth | null;
   }
   interface FastifyContextConfig {
-    /** Who may call this address. Required on every route. */
+    /** Open before signing in, or only for the CEO signed in. Required on every route. */
     access?: Access;
     /** True for the few writes that are safe to repeat as they are and take no Idempotency-Key. */
     keyless?: boolean;
@@ -148,7 +148,6 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
     const token = request.cookies[SESSION_COOKIE];
     const auth = token === undefined ? null : await findSession(db.direct, token);
     if (auth === null) throw notSignedIn();
-    if (!(access as readonly Role[]).includes(auth.user.role)) throw notAllowed();
     request.auth = auth;
 
     // Every write carries a key, so a double click on Save is done once.

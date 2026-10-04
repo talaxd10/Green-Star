@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button, Card, Chip, Empty, LinkButton, Loading, Money, PageHead, ReadProblem, Segmented, Table, Td, Th } from "@/components/ui";
 import { withQuery } from "@/lib/api";
-import { useCan, usePages } from "@/lib/hooks";
+import { usePages } from "@/lib/hooks";
 import { dayTime, ROUND } from "@/lib/labels";
 
 type Show = "all" | RoundStatus;
@@ -18,18 +18,15 @@ const SHOW: { value: Show; label: string }[] = [
 ];
 
 export default function RoundsPage() {
-  const canEnter = useCan("enter_money");
   const [show, setShow] = useState<Show>("all");
   const list = usePages<RoundSummary>(withQuery("/v1/rounds", { status: show === "all" ? undefined : show }));
 
   return (
     <>
       <PageHead title="Rounds" hint="A driver goes out with goods from any files and comes back with cash, receipts and photos. What happened at each stop is entered here.">
-        {canEnter ? (
-          <LinkButton tone="primary" href="/rounds/new">
-            New round
-          </LinkButton>
-        ) : null}
+        <LinkButton tone="primary" href="/rounds/new">
+          New round
+        </LinkButton>
       </PageHead>
       <div className="mb-4">
         <Segmented label="Which rounds" value={show} onChange={setShow} options={SHOW} />

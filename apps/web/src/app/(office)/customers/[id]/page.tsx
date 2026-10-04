@@ -30,7 +30,7 @@ import {
   Th,
 } from "@/components/ui";
 import { api } from "@/lib/api";
-import { useCan, useGet, useSave } from "@/lib/hooks";
+import { useGet, useSave } from "@/lib/hooks";
 import { CONSIGNMENT, day, dayTime, METHOD, phone, TRUST } from "@/lib/labels";
 import { amountForInput, formatMoney, parseAmount } from "@/lib/money";
 
@@ -216,8 +216,6 @@ function Merge({ customer, open, onClose }: { customer: CustomerDetail; open: bo
 export default function CustomerPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const canChange = useCan("enter_money");
-  const canTrust = useCan("change_trust");
   const [dialog, setDialog] = useState<"trust" | "details" | "merge" | null>(null);
 
   const customer = useGet<CustomerDetail>(`/v1/customers/${id}`);
@@ -250,18 +248,16 @@ export default function CustomerPage() {
         }
       >
         <LinkButton href={`/customers/${c.id}/statement`}>Statement</LinkButton>
-        {canChange ? (
-          <>
-            <Button tone="quiet" onClick={() => setDialog("merge")}>
-              Merge a duplicate
-            </Button>
-            <Button onClick={() => setDialog("details")}>Name, phones, marks</Button>
-            {canTrust ? <Button onClick={() => setDialog("trust")}>Trust and limit</Button> : null}
-            <LinkButton tone="primary" href={`/money?customer=${c.id}`}>
-              Take a payment
-            </LinkButton>
-          </>
-        ) : null}
+        <>
+          <Button tone="quiet" onClick={() => setDialog("merge")}>
+            Merge a duplicate
+          </Button>
+          <Button onClick={() => setDialog("details")}>Name, phones, marks</Button>
+          <Button onClick={() => setDialog("trust")}>Trust and limit</Button>
+          <LinkButton tone="primary" href={`/money?customer=${c.id}`}>
+            Take a payment
+          </LinkButton>
+        </>
       </PageHead>
 
       <Card className="mb-5 grid grid-cols-2 gap-6 p-5 md:grid-cols-4">

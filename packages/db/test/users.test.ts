@@ -1,5 +1,5 @@
 // Who can change what, proven against a real Postgres.
-// "The owner sees everything" and changes nothing; the monitor is a screen.
+// One kind of account: the CEO's. Nothing else can sign in or be made.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,26 +15,17 @@ import {
   customerBalance,
   draftShipmentSql,
   health,
+  newCeo,
   newCustomer,
   owner,
   refused,
+  retire,
+  switchedOff,
 } from "./helpers.ts";
 
 const HASH = "scrypt$16384$8$1$c2FsdHNhbHRzYWx0c2FsdA$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
 let phoneCounter = 0;
 const nextPhone = () => `+96477${(10000000 + ++phoneCounter).toString()}`;
-
-function newUser(role: "ceo" | "owner" | "monitor", name = `Test ${role}`): string {
-  const id = randomUUID();
-  if (role === "monitor") {
-    app(`insert into users (id, name, role, sign_in_name, created_by)
-         values (${lit(id)}, ${lit(name)}, 'monitor', ${lit(`screen${++phoneCounter}`)}, ${lit(USER)});`);
-  } else {
-    app(`insert into users (id, name, role, phone, created_by)
-         values (${lit(id)}, ${lit(name)}, ${lit(role)}, ${lit(nextPhone())}, ${lit(USER)});`);
-  }
-  return id;
-}
 
 const paymentSql = (createdBy: string, customerId: string) =>
   renderPost(officePayment({ customerId, received: usd(1000) }), {
@@ -66,33 +57,45 @@ test("the application must say who is acting", () => {
   const customerId = newCustomer();
   refused(() => appNoActor(paymentSql(USER, customerId)), /actor_required/);
   refused(
-    () => appNoActor(`insert into users (name, role, phone) values ('Nobody', 'owner', ${lit(nextPhone())});`),
+    () => appNoActor(`insert into users (name, role, phone) values ('Nobody', 'ceo', ${lit(nextPhone())});`),
     /actor_required/,
   );
   refused(() => appAs(randomUUID())(paymentSql(USER, customerId)), /actor_unknown/);
   refused(
-    () => owner(`set gs.actor = 'not-a-uuid'; insert into users (name, role, phone) values ('Bad', 'owner', ${lit(nextPhone())});`),
+    () => owner(`set gs.actor = 'not-a-uuid'; insert into users (name, role, phone) values ('Bad', 'ceo', ${lit(nextPhone())});`),
     /actor_invalid/,
   );
   assert.equal(customerBalance(customerId), 0n);
 });
 
-test("only the CEO posts money: the owner and the monitor never can", () => {
+test("no account can be made that is not a CEO's", () => {
+  const before = app("select count(*) from users;");
+  const owner1 = `insert into users (name, role, phone, created_by) values ('The owner', 'owner', ${lit(nextPhone())}, ${lit(USER)});`;
+  const screen = `insert into users (name, role, sign_in_name, created_by) values ('Office TV', 'monitor', 'office-tv', ${lit(USER)});`;
+  refused(() => app(owner1), /users_only_the_ceo/);
+  refused(() => app(screen), /users_only_the_ceo/);
+  // Not by hand either.
+  refused(() => owner(owner1), /users_only_the_ceo/);
+  refused(() => owner(screen), /users_only_the_ceo/);
+  assert.equal(app("select count(*) from users;"), before);
+  assert.equal(app("select count(*) from users where role <> 'ceo';"), "0");
+  // An account is a CEO's unless it says otherwise, and it cannot say otherwise.
+  const id = randomUUID();
+  app(`insert into users (id, name, phone, created_by) values (${lit(id)}, 'By default', ${lit(nextPhone())}, ${lit(USER)});`);
+  assert.equal(app(`select role from users where id = ${lit(id)};`), "ceo");
+  retire(id);
+});
+
+test("money is posted by an active CEO acting under his own name", () => {
   const customerId = newCustomer();
-  const ownerUser = newUser("owner");
-  const monitor = newUser("monitor");
-
-  for (const who of [ownerUser, monitor]) {
-    // Under his own name, and under the CEO's name.
-    refused(() => appAs(who)(paymentSql(who, customerId)), /ceo_only/);
-    refused(() => appAs(who)(paymentSql(USER, customerId)), /ceo_only/);
-  }
-  assert.equal(customerBalance(customerId), 0n);
-
-  // The same through the functions that run with the schema owner's rights.
   const shipment = randomUUID();
   app(draftShipmentSql(shipment, [[customerId, 5000n]]));
-  refused(() => appAs(ownerUser)(confirmSql(shipment, new Date("2026-10-03T08:00:00Z"))), /ceo_only/);
+  const off = switchedOff();
+  // Under his own name, and under the CEO's name.
+  refused(() => appAs(off)(paymentSql(off, customerId)), /actor_unknown/);
+  refused(() => appAs(off)(paymentSql(USER, customerId)), /actor_unknown/);
+  // The same through the functions that run with the schema owner's rights.
+  refused(() => appAs(off)(confirmSql(shipment, new Date("2026-10-03T08:00:00Z"))), /actor_unknown/);
   assert.equal(app(`select status from shipments where id = ${lit(shipment)};`), "draft");
   assert.equal(customerBalance(customerId), 0n);
 
@@ -104,7 +107,7 @@ test("only the CEO posts money: the owner and the monitor never can", () => {
 
 test("a CEO who is switched off can post nothing", () => {
   const customerId = newCustomer();
-  const second = newUser("ceo", "Second CEO");
+  const second = newCeo();
   appAs(second)(paymentSql(second, customerId));
   assert.equal(customerBalance(customerId), -1000n);
 
@@ -113,52 +116,56 @@ test("a CEO who is switched off can post nothing", () => {
   assert.equal(customerBalance(customerId), -1000n);
 });
 
-test("users are added and changed only by a CEO", () => {
-  const ownerUser = newUser("owner");
-  const asOwner = appAs(ownerUser);
+test("an account that is switched off can add or change no account", () => {
+  const off = switchedOff("Was here once");
+  const asOff = appAs(off);
   refused(
-    () => asOwner(`insert into users (name, role, phone, created_by) values ('Friend', 'owner', ${lit(nextPhone())}, ${lit(ownerUser)});`),
-    /ceo_only/,
+    () => asOff(`insert into users (name, role, phone, created_by) values ('Friend', 'ceo', ${lit(nextPhone())}, ${lit(off)});`),
+    /actor_unknown/,
   );
-  refused(() => asOwner(`update users set name = 'Boss' where id = ${lit(ownerUser)};`), /ceo_only/);
-  refused(() => asOwner(`update users set active = false where id = ${lit(USER)};`), /ceo_only/);
-  assert.equal(app(`select name || ' ' || active from users where id = ${lit(ownerUser)};`), "Test owner true");
+  refused(() => asOff(`update users set name = 'Boss' where id = ${lit(off)};`), /actor_unknown/);
+  refused(() => asOff(`update users set active = true where id = ${lit(off)};`), /actor_unknown/);
+  refused(() => asOff(`update users set active = false where id = ${lit(USER)};`), /actor_unknown/);
+  assert.equal(app(`select name || ' ' || active from users where id = ${lit(off)};`), "Was here once false");
 });
 
-test("a person has a phone, the monitor has a name, and neither is used twice", () => {
+test("an account has a name and a phone, and a phone is used once", () => {
   const phone = nextPhone();
-  app(`insert into users (name, role, phone, created_by) values ('Owner one', 'owner', ${lit(phone)}, ${lit(USER)});`);
+  const first = randomUUID();
+  app(`insert into users (id, name, role, phone, created_by) values (${lit(first)}, 'One', 'ceo', ${lit(phone)}, ${lit(USER)});`);
   refused(
-    () => app(`insert into users (name, role, phone, created_by) values ('Owner two', 'owner', ${lit(phone)}, ${lit(USER)});`),
+    () => app(`insert into users (name, role, phone, created_by) values ('Two', 'ceo', ${lit(phone)}, ${lit(USER)});`),
     /users_phone_key/,
   );
-  refused(() => app(`insert into users (name, role, created_by) values ('No phone', 'owner', ${lit(USER)});`), /users_people_have_a_phone/);
+  refused(() => app(`insert into users (name, role, created_by) values ('No phone', 'ceo', ${lit(USER)});`), /users_people_have_a_phone/);
   refused(
-    () => app(`insert into users (name, role, phone, created_by) values ('Local', 'owner', '0770 123 4567', ${lit(USER)});`),
+    () => app(`insert into users (name, role, phone, created_by) values ('Local', 'ceo', '0770 123 4567', ${lit(USER)});`),
     /users_phone_format/,
   );
-  refused(() => app(`insert into users (name, role, created_by) values ('Screen', 'monitor', ${lit(USER)});`), /users_monitor_has_a_name/);
+  // A sign-in name was the office screen's. A person signs in with his phone.
   refused(
-    () => app(`insert into users (name, role, sign_in_name, created_by) values ('Screen', 'monitor', 'Office TV', ${lit(USER)});`),
-    /users_sign_in_name_format/,
+    () => app(`insert into users (name, role, phone, sign_in_name, created_by) values ('Named', 'ceo', ${lit(nextPhone())}, 'office-tv', ${lit(USER)});`),
+    /users_monitor_has_a_name/,
   );
-  refused(() => app(`insert into users (name, role, phone, created_by) values (' ', 'owner', ${lit(nextPhone())}, ${lit(USER)});`), /users_name_not_blank/);
+  refused(() => app(`insert into users (name, role, phone, created_by) values (' ', 'ceo', ${lit(nextPhone())}, ${lit(USER)});`), /users_name_not_blank/);
+  retire(first);
 });
 
-test("a user keeps his role and is never deleted", () => {
-  const ownerUser = newUser("owner");
+test("an account is never deleted, and never becomes another kind", () => {
+  const second = newCeo();
   // The application has no right to do either.
-  refused(() => app(`update users set role = 'ceo' where id = ${lit(ownerUser)};`), /permission denied/);
-  refused(() => app(`delete from users where id = ${lit(ownerUser)};`), /permission denied/);
+  refused(() => app(`update users set role = 'owner' where id = ${lit(second)};`), /permission denied/);
+  refused(() => app(`delete from users where id = ${lit(second)};`), /permission denied/);
   // Nor does anyone else.
-  refused(() => owner(`update users set role = 'ceo' where id = ${lit(ownerUser)};`), /user_locked/);
-  refused(() => owner(`delete from users where id = ${lit(ownerUser)};`), /user_kept/);
-  assert.equal(app(`select role from users where id = ${lit(ownerUser)};`), "owner");
+  refused(() => owner(`update users set role = 'owner' where id = ${lit(second)};`), /user_locked/);
+  refused(() => owner(`delete from users where id = ${lit(second)};`), /user_kept/);
+  assert.equal(app(`select role from users where id = ${lit(second)};`), "ceo");
+  retire(second);
 });
 
 test("there is always an active CEO", () => {
-  const second = newUser("ceo", "Second CEO");
-  app(`update users set active = false where id = ${lit(second)};`);   // one is left
+  const second = newCeo();
+  retire(second);   // one is left
   assert.equal(app("select count(*) from users where role = 'ceo' and active;"), "1");
   // Through the application he cannot switch himself off at all.
   refused(() => app(`update users set active = false where id = ${lit(USER)};`), /own_account/);
@@ -169,33 +176,34 @@ test("there is always an active CEO", () => {
   assert.equal(app("select count(*) from users where role = 'ceo' and active;"), "1");
 });
 
-test("a password is set by the CEO or by the user himself, and is never written to the log", () => {
-  const ownerUser = newUser("owner");
-  const other = newUser("owner");
+test("a password is set by an active account, and is never written to the log", () => {
+  const second = newCeo();
+  const off = switchedOff();
   const set = (userId: string, hash = HASH) =>
     `insert into user_credentials (user_id, password_hash) values (${lit(userId)}, ${lit(hash)})
      on conflict (user_id) do update set password_hash = excluded.password_hash;`;
 
-  app(set(ownerUser));                                   // the CEO sets it
+  app(set(second));                                   // the CEO sets it
   const changed = HASH.replace(/.$/, "A");
-  appAs(ownerUser)(set(ownerUser, changed));             // the user changes his own
-  assert.equal(app(`select changed_by from user_credentials where user_id = ${lit(ownerUser)};`), ownerUser);
+  appAs(second)(set(second, changed));                // the account changes its own
+  assert.equal(app(`select changed_by from user_credentials where user_id = ${lit(second)};`), second);
 
-  refused(() => appAs(ownerUser)(set(other)), /ceo_only/);
-  refused(() => appAs(ownerUser)(set(USER)), /ceo_only/);
-  refused(() => appNoActor(set(other)), /actor_required/);
-  refused(() => app(set(other, "hunter2")), /user_credentials_is_a_hash/);
-  refused(() => owner(`delete from user_credentials where user_id = ${lit(ownerUser)};`), /credentials_kept/);
+  refused(() => appAs(off)(set(off)), /actor_unknown/);
+  refused(() => appAs(off)(set(second)), /actor_unknown/);
+  refused(() => appNoActor(set(second)), /actor_required/);
+  refused(() => app(set(second, "hunter2")), /user_credentials_is_a_hash/);
+  refused(() => owner(`delete from user_credentials where user_id = ${lit(second)};`), /credentials_kept/);
 
   const log = app(`select action || '|' || actor || '|' || coalesce(before ->> 'password', '-') || '|' || (after ->> 'password')
-                   from audit_log where entity = 'user_credentials' and entity_id = ${lit(ownerUser)} order by id;`);
-  assert.deepEqual(log.split("\n"), [`insert|${USER}|-|set`, `update|${ownerUser}|set|changed`]);
+                   from audit_log where entity = 'user_credentials' and entity_id = ${lit(second)} order by id;`);
+  assert.deepEqual(log.split("\n"), [`insert|${USER}|-|set`, `update|${second}|set|changed`]);
   const everything = app("select coalesce(string_agg(coalesce(before::text, '') || coalesce(after::text, ''), ' '), '') from audit_log;");
   assert.ok(!everything.includes("c2FsdHNhbHRzYWx0c2FsdA"), "a hash reached the audit log");
+  retire(second);
 });
 
 test("every change to a user is logged with before and after, and the log is never edited", () => {
-  const id = newUser("owner", "Aram");
+  const id = newCeo("Aram");
   app(`update users set name = 'Aram H.' where id = ${lit(id)};`);
   app(`update users set name = 'Aram H.' where id = ${lit(id)};`);   // changes nothing: not logged
   app(`update users set active = false where id = ${lit(id)};`);
@@ -217,7 +225,7 @@ test("every change to a user is logged with before and after, and the log is nev
 });
 
 test("a session belongs to one user and one device, and can only end", () => {
-  const ownerUser = newUser("owner");
+  const ownerUser = newCeo();
   const id = randomUUID();
   const token = `decode(${lit("ab".repeat(32))}, 'hex')`;
   app(`insert into sessions (id, user_id, token_hash, device, expires_at) values (${lit(id)}, ${lit(ownerUser)}, ${token}, 'Chrome on Windows', now() + interval '14 days');`);
@@ -238,6 +246,7 @@ test("a session belongs to one user and one device, and can only end", () => {
   app(`update sessions set revoked_at = now(), revoked_by = ${lit(USER)} where id = ${lit(id)};`);
   refused(() => app(`update sessions set revoked_at = null, revoked_by = null where id = ${lit(id)};`), /session_locked/);
   refused(() => app("update sign_in_attempts set succeeded = true;"), /permission denied/);
+  retire(ownerUser);
 });
 
 test("the books are still sound", () => {

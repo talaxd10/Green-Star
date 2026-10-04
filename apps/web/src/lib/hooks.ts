@@ -1,6 +1,6 @@
 "use client";
 
-import type { Action, Me, Page, RateToday } from "@green-star/contracts";
+import type { Me, Page, RateToday } from "@green-star/contracts";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiFailure, newKey, withQuery } from "./api";
@@ -17,12 +17,6 @@ export function useGet<T>(url: string | null) {
 /** Who is signed in. */
 export function useMe() {
   return useGet<Me>("/v1/me");
-}
-
-/** True when the signed-in user may do this. The owner sees every screen and no Save buttons. */
-export function useCan(action: Action): boolean {
-  const me = useMe();
-  return me.data?.can.includes(action) ?? false;
 }
 
 export function useRateToday() {

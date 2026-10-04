@@ -53,8 +53,8 @@ function ResolveDialog({ alert, onClose }: { alert: Alert; onClose: () => void }
   );
 }
 
-/** One alert. `canResolve` shows the button to the CEO on an open alert. */
-export function AlertItem({ alert, canResolve }: { alert: Alert; canResolve: boolean }) {
+/** One alert. An open one has its Resolve button. */
+export function AlertItem({ alert }: { alert: Alert }) {
   const [resolving, setResolving] = useState(false);
   const severity = SEVERITY[alert.severity];
   return (
@@ -85,7 +85,7 @@ export function AlertItem({ alert, canResolve }: { alert: Alert; canResolve: boo
         ) : null}
         {alert.status === "cleared" ? <p className="mt-1 text-[13px] text-muted">Went away by itself on {dayTime(alert.clearedAt)}.</p> : null}
       </div>
-      {canResolve && alert.status === "open" ? (
+      {alert.status === "open" ? (
         <Button small onClick={() => setResolving(true)}>
           Resolve
         </Button>

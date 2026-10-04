@@ -16,27 +16,19 @@ import {
   handIn,
   health,
   makeTrusted,
+  newCeo,
   newCustomer,
   owner,
   post,
   refused,
+  retire,
   roundOut,
   setRate,
+  switchedOff,
 } from "./helpers.ts";
 
 const DAY = new Date("2026-12-01T09:00:00Z");
 setRate("2026-12-01", 145000);
-
-let n = 0;
-function newUser(role: "ceo" | "owner" | "monitor"): string {
-  const id = randomUUID();
-  const who = role === "monitor" ? `null, ${lit(`alertscreen${++n}`)}` : `${lit(`+96479${(30000000 + ++n).toString()}`)}, null`;
-  app(`insert into users (id, name, role, phone, sign_in_name, created_by) values (${lit(id)}, ${lit(`Alert ${role}`)}, ${lit(role)}, ${who}, ${lit(USER)});`);
-  return id;
-}
-
-/** Switches a second CEO off again, so the other test files find one CEO, as they expect. */
-const retire = (userId: string) => app(`update users set active = false where id = ${lit(userId)};`);
 
 /** Runs the checks the way the application does: now. Returns how many alerts were opened. */
 const sync = (deep = false) => Number(app(`select gs_sync_alerts(${deep});`));
@@ -155,19 +147,17 @@ test("the CEO resolves an alert with a note, and it stays resolved while the sam
   assert.equal(field("missed_collection", consignmentId, "note || '|' || (cleared_at is not null)"), "Called him, he pays tomorrow|true");
 });
 
-test("only the CEO resolves an alert, under his own name", () => {
+test("an alert is resolved by an active CEO, under his own name", () => {
   const { consignmentId } = forgotToCollect("Who Resolves");
   sync();
   const id = field("missed_collection", consignmentId, "id");
   const resolve = (who: string) => `select gs_resolve_alert(${lit(id)}, ${lit(who)}, 'done');`;
 
-  for (const role of ["owner", "monitor"] as const) {
-    const who = newUser(role);
-    refused(() => appAs(who)(resolve(who)), /ceo_only/);
-    refused(() => appAs(who)(resolve(USER)), /ceo_only/);
-  }
+  const off = switchedOff();
+  refused(() => appAs(off)(resolve(off)), /actor_unknown/);
+  refused(() => appAs(off)(resolve(USER)), /actor_unknown/);
   refused(() => appNoActor(resolve(USER)), /actor_required/);
-  const second = newUser("ceo");
+  const second = newCeo();
   refused(() => appAs(second)(resolve(USER)), /actor_mismatch/);
   assert.equal(alertsOf("missed_collection", consignmentId), "open/true");
 
@@ -297,11 +287,11 @@ test("goods held in the car longer than the set number of days are an alert", ()
   assert.equal(alertsOf("held_too_long", consignmentId), "cleared/false cleared/false");
 });
 
-test("the settings are one row, changed only by the CEO, and every change is logged", () => {
+test("the settings are one row, changed only by an active CEO, and every change is logged", () => {
   assert.equal(app("select count(*) from settings;"), "1");
   assert.equal(
-    app("select held_in_car_days || '|' || vault_close_time || '|' || wallet_check_days || '|' || array_to_string(monitor_widgets, ',') from settings;"),
-    "3|18:00:00|7|files,rounds,held",
+    app("select held_in_car_days || '|' || vault_close_time || '|' || wallet_check_days from settings;"),
+    "3|18:00:00|7",
   );
   refused(() => owner("insert into settings (id) values (2);"), /settings_one_row/);
   refused(() => owner("insert into settings default values;"), /settings_pkey/);
@@ -311,27 +301,21 @@ test("the settings are one row, changed only by the CEO, and every change is log
   refused(() => app("update settings set held_in_car_days = 0;"), /settings_held_days/);
   refused(() => app("update settings set held_in_car_days = 61;"), /settings_held_days/);
   refused(() => app("update settings set wallet_check_days = 0;"), /settings_wallet_days/);
-  refused(() => app("update settings set monitor_widgets = '{files,money}';"), /settings_widgets/);
-  refused(() => app("update settings set monitor_widgets = '{files,files}';"), /settings_widgets/);
-  refused(() => app("update settings set monitor_widgets = null;"), /null value|settings_widgets/);
+  // The office screen went with the accounts that were not the CEO's: so did what it showed.
+  refused(() => app("select monitor_widgets from settings;"), /does not exist/);
 
-  for (const role of ["owner", "monitor"] as const) {
-    const who = newUser(role);
-    refused(() => appAs(who)("update settings set held_in_car_days = 5;"), /ceo_only/);
-  }
+  refused(() => appAs(switchedOff())("update settings set held_in_car_days = 5;"), /actor_unknown/);
   refused(() => appNoActor("update settings set held_in_car_days = 5;"), /actor_required/);
   assert.equal(app("select held_in_car_days from settings;"), "3");
 
   const before = Number(app("select count(*) from audit_log where entity = 'settings';"));
-  app("update settings set monitor_widgets = '{held,rounds}', updated_at = now();");
+  app("update settings set held_in_car_days = 5, updated_at = now();");
   assert.equal(Number(app("select count(*) from audit_log where entity = 'settings';")), before + 1);
   assert.equal(
-    app("select actor || '|' || (before ->> 'monitor_widgets') || '|' || (after ->> 'monitor_widgets') from audit_log where entity = 'settings' order by id desc limit 1;"),
-    `${USER}|["files", "rounds", "held"]|["held", "rounds"]`,
+    app("select actor || '|' || (before ->> 'held_in_car_days') || '|' || (after ->> 'held_in_car_days') from audit_log where entity = 'settings' order by id desc limit 1;"),
+    `${USER}|3|5`,
   );
-  // An empty screen is allowed: the monitor shows nothing.
-  app("update settings set monitor_widgets = '{}';");
-  app("update settings set monitor_widgets = '{files,rounds,held}';");
+  app("update settings set held_in_car_days = 3;");
 });
 
 test("a wallet is checked against its app: a gap needs a note and is carried forward", () => {
@@ -385,14 +369,12 @@ test("a wallet is checked against its app: a gap needs a note and is carried for
     /wallet_checks_gap_has_note/,
   );
 
-  // Only the CEO, under his own name.
-  for (const role of ["owner", "monitor"] as const) {
-    const who = newUser(role);
-    refused(() => appAs(who)(check(base + 114500, null).replace(lit(USER), lit(who))), /ceo_only/);
-    refused(() => appAs(who)(check(base + 114500, null)), /ceo_only/);
-  }
+  // Only an active CEO, under his own name.
+  const off = switchedOff();
+  refused(() => appAs(off)(check(base + 114500, null).replace(lit(USER), lit(off))), /actor_unknown/);
+  refused(() => appAs(off)(check(base + 114500, null)), /actor_unknown/);
   refused(() => appNoActor(check(base + 114500, null)), /actor_required/);
-  const otherCeo = newUser("ceo");
+  const otherCeo = newCeo();
   refused(() => appAs(otherCeo)(check(base + 114500, null)), /actor_mismatch/);
   retire(otherCeo);
 });

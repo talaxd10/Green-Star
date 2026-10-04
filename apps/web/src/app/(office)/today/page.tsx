@@ -4,14 +4,13 @@ import type { Alert, Page, TodayReport } from "@green-star/contracts";
 import Link from "next/link";
 import { AlertItem, bySeverity } from "@/components/alerts";
 import { Card, CardHead, Chip, Empty, LinkButton, Loading, Money, PageHead, ReadProblem, Stat, Table, Td, Th } from "@/components/ui";
-import { useCan, useGet } from "@/lib/hooks";
+import { useGet } from "@/lib/hooks";
 import { day, dayTime, ROUND, SHIPMENT } from "@/lib/labels";
 import { formatRatePerDollar } from "@/lib/money";
 
 const SHOWN = 6;
 
 export default function TodayPage() {
-  const canEnter = useCan("enter_money");
   const report = useGet<TodayReport>("/v1/reports/today");
   const open = useGet<Page<Alert>>("/v1/alerts?status=open&limit=200");
 
@@ -84,7 +83,7 @@ export default function TodayPage() {
               <>
                 <ul className="divide-y divide-rule">
                   {alerts.slice(0, SHOWN).map((alert) => (
-                    <AlertItem key={alert.id} alert={alert} canResolve={canEnter} />
+                    <AlertItem key={alert.id} alert={alert} />
                   ))}
                 </ul>
                 {alerts.length > SHOWN ? (
@@ -156,11 +155,9 @@ export default function TodayPage() {
             title="Today's rounds"
             hint="Rounds that are not finished, and rounds counted in today."
             action={
-              canEnter ? (
-                <LinkButton small href="/rounds/new">
-                  New round
-                </LinkButton>
-              ) : undefined
+              <LinkButton small href="/rounds/new">
+                New round
+              </LinkButton>
             }
           />
           {t.rounds.length === 0 ? (

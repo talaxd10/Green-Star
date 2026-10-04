@@ -4,8 +4,7 @@
 //   pnpm db:reset
 //   pnpm --filter @green-star/api seed-demo
 //
-// Sign in as the CEO with 0770 000 0001, the owner with 0770 000 0002, or the
-// monitor with office-tv. The password for all three is in DEMO_PASSWORD below.
+// Sign in as the CEO with 0770 000 0001. The password is in DEMO_PASSWORD below.
 //
 // Everything goes in through the API's own routes, the way the office app
 // sends it, so the demo data obeys every rule the real data will.
@@ -78,8 +77,6 @@ const ago = (days: number, hour = 9) => {
 const dayOf = (iso: string) => new Date(Date.parse(iso) + 3 * 3_600_000).toISOString().slice(0, 10);
 
 await send("POST", "/v1/auth/login", { phone: "0770 000 0001", password: DEMO_PASSWORD });
-await send("POST", "/v1/users", { role: "owner", name: "Kak Azad", phone: "0770 000 0002", password: DEMO_PASSWORD });
-await send("POST", "/v1/users", { role: "monitor", name: "Office TV", signInName: "office-tv", password: DEMO_PASSWORD });
 
 // A week of rates, the way he sets one each morning.
 for (const [days, rate] of [[6, 144_500], [5, 144_750], [4, 145_250], [3, 145_000], [2, 144_750], [1, 145_250], [0, RATE]] as const) {
@@ -226,6 +223,4 @@ await app.close();
 await db.close();
 console.log(`Demo office ready in ${database}.
   CEO      0770 000 0001
-  Owner    0770 000 0002
-  Monitor  office-tv
   Password ${DEMO_PASSWORD}`);

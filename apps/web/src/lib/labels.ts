@@ -9,7 +9,6 @@ import type {
   DisputeStatus,
   EntryKind,
   PaymentMethod,
-  Role,
   RoundOutcome,
   RoundStatus,
   ShipmentStatus,
@@ -96,8 +95,6 @@ export const ENTRY: Record<EntryKind, string> = {
   currency_exchange: "Currency exchange",
   reversal: "Reversal",
 };
-
-export const ROLE: Record<Role, string> = { ceo: "CEO", owner: "Owner", monitor: "Office monitor" };
 
 /** What an alert is about, in two or three words. */
 export const ALERT: Record<AlertKind, string> = {

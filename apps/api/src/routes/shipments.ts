@@ -1,30 +1,28 @@
 // Files from China, their consignments, and problems with the goods.
 //
-//   GET   /v1/shipments                  CEO, owner  Files by status
-//   POST  /v1/shipments                  CEO         Type a file in by hand, as a draft
-//   GET   /v1/shipments/:id              CEO, owner  Consignments, expected vs collected, what blocks closing
-//   PUT   /v1/shipments/:id              CEO         Replace a draft's rows
-//   POST  /v1/shipments/:id/confirm      CEO         Post every charge in one transaction
-//   GET   /v1/consignments               CEO, owner  Consignments of a customer, or ready for a round
-//   POST  /v1/consignments/:id/cancel    CEO         Cancel one and reverse its charge
-//   POST  /v1/consignments/:id/correct   CEO         Replace one with the right amount
-//   GET   /v1/disputes                   CEO, owner  Problems with goods, and which wait on China
-//   POST  /v1/disputes                   CEO         Open a dispute and mark it sent to China
-//   PATCH /v1/disputes/:id               CEO         Record China's answer and close it
+//   GET   /v1/shipments                  Files by status
+//   POST  /v1/shipments                  Type a file in by hand, as a draft
+//   GET   /v1/shipments/:id              Consignments, expected vs collected, what blocks closing
+//   PUT   /v1/shipments/:id              Replace a draft's rows
+//   POST  /v1/shipments/:id/confirm      Post every charge in one transaction
+//   GET   /v1/consignments               Consignments of a customer, or ready for a round
+//   POST  /v1/consignments/:id/cancel    Cancel one and reverse its charge
+//   POST  /v1/consignments/:id/correct   Replace one with the right amount
+//   GET   /v1/disputes                   Problems with goods, and which wait on China
+//   POST  /v1/disputes                   Open a dispute and mark it sent to China
+//   PATCH /v1/disputes/:id               Record China's answer and close it
 //
 // The Excel import (POST /v1/imports) is not here yet: it needs the real
 // China files. Until then a file is typed in by hand.
 
 import {
   CancelConsignmentRequest,
-  CEO_ONLY,
   ConfirmShipmentRequest,
   CorrectConsignmentRequest,
   DisputeQuery,
   DraftShipmentRequest,
   IdParams,
   NewDisputeRequest,
-  READERS,
   ShipmentQuery,
   UpdateDisputeRequest,
   Uuid,
@@ -89,7 +87,7 @@ const ConsignmentQuery = z.object({
 export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
   const ctx = app.ctx;
 
-  app.get("/shipments", { config: { access: READERS } }, async (request): Promise<Page<ShipmentSummary>> => {
+  app.get("/shipments", { config: { access: "signed_in" } }, async (request): Promise<Page<ShipmentSummary>> => {
     const query = parse(ShipmentQuery, request.query);
     const p = pager(query, "created_at", "shipment_id::text");
     const params: unknown[] = [];
@@ -104,7 +102,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toShipment);
   });
 
-  app.post("/shipments", { config: { access: CEO_ONLY } }, async (request, reply): Promise<ShipmentDetail> => {
+  app.post("/shipments", { config: { access: "signed_in" } }, async (request, reply): Promise<ShipmentDetail> => {
     const body = parse(DraftShipmentRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {
       const id = await q.value<string>("insert into shipments (code, arrived_on) values ($1, $2) returning id", [
@@ -116,12 +114,12 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/shipments/:id", { config: { access: READERS } }, async (request): Promise<ShipmentDetail> => {
+  app.get("/shipments/:id", { config: { access: "signed_in" } }, async (request): Promise<ShipmentDetail> => {
     const { id } = parse(IdParams, request.params);
     return read(ctx, (q) => shipmentDetail(q, id));
   });
 
-  app.put("/shipments/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<ShipmentDetail> => {
+  app.put("/shipments/:id", { config: { access: "signed_in" } }, async (request, reply): Promise<ShipmentDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(DraftShipmentRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {
@@ -137,7 +135,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/shipments/:id/confirm", { config: { access: CEO_ONLY } }, async (request, reply): Promise<ShipmentDetail> => {
+  app.post("/shipments/:id/confirm", { config: { access: "signed_in" } }, async (request, reply): Promise<ShipmentDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(ConfirmShipmentRequest, request.body ?? {});
     const at = happened(body.confirmedAt, "confirmedAt");
@@ -147,7 +145,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/consignments", { config: { access: READERS } }, async (request): Promise<{ items: Consignment[] }> => {
+  app.get("/consignments", { config: { access: "signed_in" } }, async (request): Promise<{ items: Consignment[] }> => {
     const query = parse(ConsignmentQuery, request.query);
     const params: unknown[] = [];
     let where = "status <> 'cancelled' and shipment_status <> 'draft'";
@@ -168,7 +166,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     return { items: rows.map(toConsignment) };
   });
 
-  app.post("/consignments/:id/cancel", { config: { access: CEO_ONLY } }, async (request, reply): Promise<ShipmentDetail> => {
+  app.post("/consignments/:id/cancel", { config: { access: "signed_in" } }, async (request, reply): Promise<ShipmentDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(CancelConsignmentRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -179,7 +177,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/consignments/:id/correct", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Consignment> => {
+  app.post("/consignments/:id/correct", { config: { access: "signed_in" } }, async (request, reply): Promise<Consignment> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(CorrectConsignmentRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -196,7 +194,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/disputes", { config: { access: READERS } }, async (request): Promise<{ items: Dispute[] }> => {
+  app.get("/disputes", { config: { access: "signed_in" } }, async (request): Promise<{ items: Dispute[] }> => {
     const query = parse(DisputeQuery, request.query);
     const params: unknown[] = [];
     let where = "true";
@@ -209,7 +207,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     return { items: rows.map(toDispute) };
   });
 
-  app.post("/disputes", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Dispute> => {
+  app.post("/disputes", { config: { access: "signed_in" } }, async (request, reply): Promise<Dispute> => {
     const body = parse(NewDisputeRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
       const consignment = await q.first("select 1 from consignments where id = $1 and status <> 'cancelled'", [body.consignmentId]);
@@ -224,7 +222,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.patch("/disputes/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Dispute> => {
+  app.patch("/disputes/:id", { config: { access: "signed_in" } }, async (request, reply): Promise<Dispute> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(UpdateDisputeRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {

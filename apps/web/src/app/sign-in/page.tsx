@@ -20,10 +20,9 @@ function SignIn() {
     setBusy(true);
     setProblem(null);
     try {
-      const me = await api.post<Me>("/v1/auth/login", { phone, password });
+      await api.post<Me>("/v1/auth/login", { phone, password });
       // Only ever back to a screen of this app, never to another site.
-      const target = me.user.role === "monitor" ? "/monitor" : next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/";
-      router.replace(target);
+      router.replace(next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/");
     } catch (error) {
       setProblem(error instanceof ApiFailure ? error : new ApiFailure(0, { message: String(error) }));
       setBusy(false);

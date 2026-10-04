@@ -4,7 +4,7 @@ import type { Alert, AlertCount, AlertStatus } from "@green-star/contracts";
 import { useState } from "react";
 import { AlertItem, bySeverity } from "@/components/alerts";
 import { Button, Card, Empty, Loading, PageHead, ReadProblem, Segmented } from "@/components/ui";
-import { useCan, useGet, usePages } from "@/lib/hooks";
+import { useGet, usePages } from "@/lib/hooks";
 
 const EMPTY: Record<AlertStatus, { title: string; text: string }> = {
   open: { title: "Nothing is open", text: "Everything matches: no missed collections, no cash gaps, nobody over his limit." },
@@ -13,7 +13,6 @@ const EMPTY: Record<AlertStatus, { title: string; text: string }> = {
 };
 
 export default function AlertsPage() {
-  const canResolve = useCan("enter_money");
   const [show, setShow] = useState<AlertStatus>("open");
   const count = useGet<AlertCount>("/v1/alerts/count");
   const list = usePages<Alert>(`/v1/alerts?status=${show}`);
@@ -48,7 +47,7 @@ export default function AlertsPage() {
         ) : (
           <ul className="divide-y divide-rule">
             {items.map((alert) => (
-              <AlertItem key={alert.id} alert={alert} canResolve={canResolve} />
+              <AlertItem key={alert.id} alert={alert} />
             ))}
           </ul>
         )}

@@ -1,5 +1,4 @@
-// Checks and alerts, the Today screen, the wallet check, the office settings
-// and the office monitor.
+// Checks and alerts, the Today screen, the wallet check and the office settings.
 
 import { z } from "zod";
 import { type Currency, Instant, Note, PageQuery, Reason, Uuid } from "./common.ts";
@@ -195,12 +194,8 @@ export const WalletCheckRequest = z.strictObject({
 export type WalletCheckRequest = z.infer<typeof WalletCheckRequest>;
 
 // ---------------------------------------------------------------------------
-// Settings and the office monitor
+// Settings
 // ---------------------------------------------------------------------------
-
-/** What the office screen can show. None of them shows money. */
-export const MONITOR_WIDGETS = ["files", "rounds", "held"] as const;
-export type MonitorWidget = (typeof MONITOR_WIDGETS)[number];
 
 export interface Settings {
   /** Goods held in the car longer than this many days raise an alert. */
@@ -209,8 +204,6 @@ export interface Settings {
   vaultCloseTime: string;
   /** How many days wallet money may wait before it is checked against the app. */
   walletCheckDays: number;
-  /** What the office screen shows, in this order. */
-  monitorWidgets: MonitorWidget[];
   updatedAt: string;
 }
 
@@ -220,49 +213,6 @@ export const SettingsRequest = z
     heldInCarDays: z.number().int().min(1, "At least 1 day").max(60, "At most 60 days").optional(),
     vaultCloseTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "A time looks like 18:00").optional(),
     walletCheckDays: z.number().int().min(1, "At least 1 day").max(60, "At most 60 days").optional(),
-    monitorWidgets: z
-      .array(z.enum(MONITOR_WIDGETS))
-      .max(MONITOR_WIDGETS.length)
-      .refine((widgets) => new Set(widgets).size === widgets.length, "Each widget can be shown once")
-      .optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined), "Nothing to change");
 export type SettingsRequest = z.infer<typeof SettingsRequest>;
-
-export interface MonitorFile {
-  code: string;
-  status: ShipmentStatus;
-  consignments: number;
-  /** How many customers on the file have their goods. */
-  delivered: number;
-}
-
-export interface MonitorRound {
-  number: number;
-  status: "planned" | "out" | "returned";
-  /** The driver or the transport office. */
-  carriedBy: string;
-  leftAt: string | null;
-  stops: number;
-  /** How many stops have their result entered. */
-  done: number;
-}
-
-export interface MonitorHeld {
-  customerName: string;
-  shipmentCode: string;
-  city: string | null;
-  heldSince: string | null;
-}
-
-/**
- * GET /v1/monitor. Only the widgets chosen for the office screen, in the
- * order chosen. A widget that is switched off is not sent at all. No money.
- */
-export interface Monitor {
-  at: string;
-  widgets: MonitorWidget[];
-  files?: MonitorFile[];
-  rounds?: MonitorRound[];
-  held?: MonitorHeld[];
-}

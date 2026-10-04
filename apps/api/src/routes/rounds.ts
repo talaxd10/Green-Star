@@ -1,27 +1,26 @@
 // Rounds: the driver goes out with goods from any files and comes back with
 // cash, receipts and photos. The CEO enters what happened.
 //
-//   GET    /v1/drivers                          CEO, owner  Drivers
-//   POST   /v1/drivers                          CEO         Add a driver
-//   PATCH  /v1/drivers/:id                      CEO         Rename, switch off
-//   GET    /v1/carriers                         CEO, owner  Our cars and transport offices
-//   POST   /v1/carriers                         CEO         Add a carrier
-//   PATCH  /v1/carriers/:id                     CEO         Rename, switch off
-//   GET    /v1/rounds                           CEO, owner  Rounds, newest first
-//   POST   /v1/rounds                           CEO         New round: driver or carrier, consignments from any files, carton counts
-//   GET    /v1/rounds/:id                       CEO, owner  Stops, outcomes, money expected
-//   POST   /v1/rounds/:id/stops                 CEO         Put a consignment on the round
-//   DELETE /v1/rounds/:id/stops/:consignmentId  CEO         Take it off again
-//   POST   /v1/rounds/:id/depart                CEO         The driver leaves
-//   PUT    /v1/rounds/:id/results               CEO         Outcome, amount, currency and method per customer
-//   POST   /v1/round-results/:id/void           CEO         Take a result back
-//   POST   /v1/rounds/:id/hand-in               CEO         Cash counted by denomination per currency
-//   POST   /v1/hand-ins/:id/void                CEO         Take a hand-in back
-//   POST   /v1/exceptions                       CEO         Allow a pay-first handover without full payment, with a reason
+//   GET    /v1/drivers                          Drivers
+//   POST   /v1/drivers                          Add a driver
+//   PATCH  /v1/drivers/:id                      Rename, switch off
+//   GET    /v1/carriers                         Our cars and transport offices
+//   POST   /v1/carriers                         Add a carrier
+//   PATCH  /v1/carriers/:id                     Rename, switch off
+//   GET    /v1/rounds                           Rounds, newest first
+//   POST   /v1/rounds                           New round: driver or carrier, consignments from any files, carton counts
+//   GET    /v1/rounds/:id                       Stops, outcomes, money expected
+//   POST   /v1/rounds/:id/stops                 Put a consignment on the round
+//   DELETE /v1/rounds/:id/stops/:consignmentId  Take it off again
+//   POST   /v1/rounds/:id/depart                The driver leaves
+//   PUT    /v1/rounds/:id/results               Outcome, amount, currency and method per customer
+//   POST   /v1/round-results/:id/void           Take a result back
+//   POST   /v1/rounds/:id/hand-in               Cash counted by denomination per currency
+//   POST   /v1/hand-ins/:id/void                Take a hand-in back
+//   POST   /v1/exceptions                       Allow a pay-first handover without full payment, with a reason
 
 import {
   AddStopRequest,
-  CEO_ONLY,
   DepartRequest,
   HandInRequest,
   IdParams,
@@ -29,7 +28,6 @@ import {
   NewDriverRequest,
   NewExceptionRequest,
   NewRoundRequest,
-  READERS,
   RoundQuery,
   RoundResultsRequest,
   StopParams,
@@ -115,12 +113,12 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Who carries the goods ------------------------------------------------
 
-  app.get("/drivers", { config: { access: READERS } }, async (): Promise<{ items: Driver[] }> => {
+  app.get("/drivers", { config: { access: "signed_in" } }, async (): Promise<{ items: Driver[] }> => {
     const rows = await read(ctx, (q) => q.query("select id, name, phone, active from drivers order by active desc, name, id"));
     return { items: rows.map((row) => camel<Driver>(row)) };
   });
 
-  app.post("/drivers", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Driver> => {
+  app.post("/drivers", { config: { access: "signed_in" } }, async (request, reply): Promise<Driver> => {
     const body = parse(NewDriverRequest, request.body);
     const phone = driverPhone(body.phone) ?? null;
     return write(ctx, request, reply, async ({ q }) => {
@@ -129,7 +127,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.patch("/drivers/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Driver> => {
+  app.patch("/drivers/:id", { config: { access: "signed_in" } }, async (request, reply): Promise<Driver> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(UpdateDriverRequest, request.body);
     const phone = driverPhone(body.phone);
@@ -146,12 +144,12 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/carriers", { config: { access: READERS } }, async (): Promise<{ items: Carrier[] }> => {
+  app.get("/carriers", { config: { access: "signed_in" } }, async (): Promise<{ items: Carrier[] }> => {
     const rows = await read(ctx, (q) => q.query("select id, name, city, kind, active from carriers order by active desc, name, id"));
     return { items: rows.map((row) => camel<Carrier>(row)) };
   });
 
-  app.post("/carriers", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Carrier> => {
+  app.post("/carriers", { config: { access: "signed_in" } }, async (request, reply): Promise<Carrier> => {
     const body = parse(NewCarrierRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {
       const row = await q.first("insert into carriers (name, city, kind) values ($1, $2, $3) returning id, name, city, kind, active", [
@@ -163,7 +161,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.patch("/carriers/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Carrier> => {
+  app.patch("/carriers/:id", { config: { access: "signed_in" } }, async (request, reply): Promise<Carrier> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(UpdateCarrierRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {
@@ -181,7 +179,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Rounds ---------------------------------------------------------------
 
-  app.get("/rounds", { config: { access: READERS } }, async (request): Promise<Page<RoundSummary>> => {
+  app.get("/rounds", { config: { access: "signed_in" } }, async (request): Promise<Page<RoundSummary>> => {
     const query = parse(RoundQuery, request.query);
     const p = pager(query, "r.created_at", "r.id::text");
     const params: unknown[] = [];
@@ -200,7 +198,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toRound);
   });
 
-  app.post("/rounds", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/rounds", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const body = parse(NewRoundRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
       const id = await q.value<string>(
@@ -215,12 +213,12 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/rounds/:id", { config: { access: READERS } }, async (request): Promise<RoundDetail> => {
+  app.get("/rounds/:id", { config: { access: "signed_in" } }, async (request): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     return read(ctx, (q) => roundDetail(q, id));
   });
 
-  app.post("/rounds/:id/stops", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/rounds/:id/stops", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(AddStopRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -229,7 +227,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/rounds/:id/stops/:consignmentId", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.delete("/rounds/:id/stops/:consignmentId", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id, consignmentId } = parse(StopParams, request.params);
     return write(ctx, request, reply, async ({ q, auth }) => {
       await q.query("select gs_remove_round_stop($1, $2, $3)", [id, consignmentId, auth.user.id]);
@@ -237,7 +235,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/rounds/:id/depart", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/rounds/:id/depart", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(DepartRequest, request.body ?? {});
     const at = happened(body.at, "at");
@@ -247,7 +245,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.put("/rounds/:id/results", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.put("/rounds/:id/results", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(RoundResultsRequest, request.body);
     const rows = body.results.map((row, index) => ({ ...row, at: happened(row.happenedAt, `results.${index}.happenedAt`) }));
@@ -271,7 +269,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/round-results/:id/void", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/round-results/:id/void", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(VoidRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -282,7 +280,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/rounds/:id/hand-in", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/rounds/:id/hand-in", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(HandInRequest, request.body);
     const at = happened(body.happenedAt);
@@ -300,7 +298,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/hand-ins/:id/void", { config: { access: CEO_ONLY } }, async (request, reply): Promise<RoundDetail> => {
+  app.post("/hand-ins/:id/void", { config: { access: "signed_in" } }, async (request, reply): Promise<RoundDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(VoidRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -311,7 +309,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/exceptions", { config: { access: CEO_ONLY } }, async (request, reply) => {
+  app.post("/exceptions", { config: { access: "signed_in" } }, async (request, reply) => {
     const body = parse(NewExceptionRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
       const consignment = await q.first("select 1 from consignments where id = $1", [body.consignmentId]);

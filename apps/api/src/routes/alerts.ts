@@ -1,15 +1,13 @@
-// Checks and alerts, the Today screen, the wallet check, the office settings
-// and the office monitor.
+// Checks and alerts, the Today screen, the wallet check and the office settings.
 //
-//   GET  /v1/alerts              CEO, owner  Open alerts, newest first (or resolved, or cleared)
-//   GET  /v1/alerts/count        CEO, owner  How many are open, for the badge in the menu
-//   POST /v1/alerts/:id/resolve  CEO         Close an alert with a note
-//   GET  /v1/reports/today       CEO, owner  Expected vs collected vs counted, per currency
-//   GET  /v1/wallets             CEO, owner  Each wallet: the books, what its app should show, the last checks
-//   POST /v1/wallets/checks      CEO         What the wallet's app shows, typed in and compared
-//   GET  /v1/settings            CEO, owner  Held-in-car days, close time, wallet days, monitor widgets
-//   PUT  /v1/settings            CEO         Change them
-//   GET  /v1/monitor             everyone    Only the widgets chosen for the office screen. No money.
+//   GET  /v1/alerts              Open alerts, newest first (or resolved, or cleared)
+//   GET  /v1/alerts/count        How many are open, for the badge in the menu
+//   POST /v1/alerts/:id/resolve  Close an alert with a note
+//   GET  /v1/reports/today       Expected vs collected vs counted, per currency
+//   GET  /v1/wallets             Each wallet: the books, what its app should show, the last checks
+//   POST /v1/wallets/checks      What the wallet's app shows, typed in and compared
+//   GET  /v1/settings            Held-in-car days, close time, wallet days
+//   PUT  /v1/settings            Change them
 //
 // The alerts themselves are not made here. After every save the API asks the
 // database to bring them in line with the facts (see write() in http.ts), and
@@ -17,20 +15,12 @@
 
 import {
   AlertQuery,
-  CEO_ONLY,
-  EVERYONE,
   IdParams,
-  READERS,
   ResolveAlertRequest,
   SettingsRequest,
   WalletCheckRequest,
   type Alert,
   type AlertCount,
-  type Monitor,
-  type MonitorFile,
-  type MonitorHeld,
-  type MonitorRound,
-  type MonitorWidget,
   type Page,
   type Rate,
   type RoundSummary,
@@ -149,43 +139,10 @@ async function wallets(q: Queryable): Promise<Wallets> {
 
 async function settings(q: Queryable): Promise<Settings> {
   const row = await q.first(
-    `select held_in_car_days, to_char(vault_close_time, 'HH24:MI') as vault_close_time, wallet_check_days, monitor_widgets, updated_at
+    `select held_in_car_days, to_char(vault_close_time, 'HH24:MI') as vault_close_time, wallet_check_days, updated_at
      from settings`,
   );
   return camel<Settings>(row as Row);
-}
-
-async function monitor(q: Queryable): Promise<Monitor> {
-  const { monitorWidgets } = await settings(q);
-  const out: Monitor = { at: new Date().toISOString(), widgets: monitorWidgets };
-  const shown = new Set<MonitorWidget>(monitorWidgets);
-
-  if (shown.has("files")) {
-    const rows = await q.query(
-      `select code, status, consignments, consignments - not_delivered as delivered
-       from shipment_overview where status <> 'closed' order by created_at desc, shipment_id limit 30`,
-    );
-    out.files = rows.map((row) => camel<MonitorFile>(row));
-  }
-  if (shown.has("rounds")) {
-    const rows = await q.query(
-      `select number, status, coalesce(driver_name, carrier_name) as carried_by, left_at, stops, results as done
-       from round_overview where status <> 'handed_in' order by number desc limit 30`,
-    );
-    out.rounds = rows.map((row) => camel<MonitorRound>(row));
-  }
-  if (shown.has("held")) {
-    const rows = await q.query(
-      `select cu.display_name as customer_name, s.code as shipment_code, c.city, h.held_since
-       from held_in_car h
-       join consignments c on c.id = h.consignment_id
-       join customers cu on cu.id = h.customer_id
-       join shipments s on s.id = h.shipment_id
-       order by h.held_since nulls last, c.id limit 60`,
-    );
-    out.held = rows.map((row) => camel<MonitorHeld>(row));
-  }
-  return out;
 }
 
 export async function alertRoutes(app: FastifyInstance): Promise<void> {
@@ -193,7 +150,7 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Alerts ---------------------------------------------------------------
 
-  app.get("/alerts", { config: { access: READERS } }, async (request): Promise<Page<Alert>> => {
+  app.get("/alerts", { config: { access: "signed_in" } }, async (request): Promise<Page<Alert>> => {
     const query = parse(AlertQuery, request.query);
     // Open alerts by when they started; closed ones by when they were closed.
     const at = query.status === "open" ? "a.opened_at" : query.status === "resolved" ? "a.resolved_at" : "a.cleared_at";
@@ -210,9 +167,9 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toAlert);
   });
 
-  app.get("/alerts/count", { config: { access: READERS } }, async (): Promise<AlertCount> => read(ctx, alertCount));
+  app.get("/alerts/count", { config: { access: "signed_in" } }, async (): Promise<AlertCount> => read(ctx, alertCount));
 
-  app.post("/alerts/:id/resolve", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Alert> => {
+  app.post("/alerts/:id/resolve", { config: { access: "signed_in" } }, async (request, reply): Promise<Alert> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(ResolveAlertRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -225,13 +182,13 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Today ----------------------------------------------------------------
 
-  app.get("/reports/today", { config: { access: READERS } }, async (): Promise<TodayReport> => read(ctx, today));
+  app.get("/reports/today", { config: { access: "signed_in" } }, async (): Promise<TodayReport> => read(ctx, today));
 
   // -- Wallets --------------------------------------------------------------
 
-  app.get("/wallets", { config: { access: READERS } }, async (): Promise<Wallets> => read(ctx, wallets));
+  app.get("/wallets", { config: { access: "signed_in" } }, async (): Promise<Wallets> => read(ctx, wallets));
 
-  app.post("/wallets/checks", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Wallets> => {
+  app.post("/wallets/checks", { config: { access: "signed_in" } }, async (request, reply): Promise<Wallets> => {
     const body = parse(WalletCheckRequest, request.body);
     const at = happened(body.checkedAt, "checkedAt");
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -242,9 +199,9 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
 
   // -- Settings -------------------------------------------------------------
 
-  app.get("/settings", { config: { access: READERS } }, async (): Promise<Settings> => read(ctx, settings));
+  app.get("/settings", { config: { access: "signed_in" } }, async (): Promise<Settings> => read(ctx, settings));
 
-  app.put("/settings", { config: { access: CEO_ONLY } }, async (request, reply): Promise<Settings> => {
+  app.put("/settings", { config: { access: "signed_in" } }, async (request, reply): Promise<Settings> => {
     const body = parse(SettingsRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {
       await q.query(
@@ -252,15 +209,10 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
             set held_in_car_days = coalesce($1::integer, held_in_car_days),
                 vault_close_time = coalesce($2::time, vault_close_time),
                 wallet_check_days = coalesce($3::integer, wallet_check_days),
-                monitor_widgets = coalesce($4::text[], monitor_widgets),
                 updated_at = now()`,
-        [body.heldInCarDays ?? null, body.vaultCloseTime ?? null, body.walletCheckDays ?? null, body.monitorWidgets ?? null],
+        [body.heldInCarDays ?? null, body.vaultCloseTime ?? null, body.walletCheckDays ?? null],
       );
       return { body: await settings(q) };
     });
   });
-
-  // -- The office monitor ---------------------------------------------------
-
-  app.get("/monitor", { config: { access: EVERYONE } }, async (): Promise<Monitor> => read(ctx, monitor));
 }

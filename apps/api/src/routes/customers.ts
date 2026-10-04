@@ -1,17 +1,16 @@
 // Customers.
 //
-//   GET    /v1/customers                     CEO, owner  Search by phone, mark or name; filter trusted, over limit, owing
-//   POST   /v1/customers                     CEO         Create a customer or an agent company
-//   GET    /v1/customers/:id                 CEO, owner  One customer: balance, phones, marks, trust history
-//   PATCH  /v1/customers/:id                 CEO         Name and kind; trust and limit, with who asked
-//   POST   /v1/customers/:id/phones          CEO         Add a phone
-//   DELETE /v1/customers/:id/phones/:childId CEO         Remove a phone
-//   POST   /v1/customers/:id/marks           CEO         Add a mark or a mark prefix
-//   DELETE /v1/customers/:id/marks/:childId  CEO         Remove a mark
-//   POST   /v1/customers/:id/merge           CEO         Merge a duplicate into this customer
+//   GET    /v1/customers                     Search by phone, mark or name; filter trusted, over limit, owing
+//   POST   /v1/customers                     Create a customer or an agent company
+//   GET    /v1/customers/:id                 One customer: balance, phones, marks, trust history
+//   PATCH  /v1/customers/:id                 Name and kind; trust and limit, with who asked
+//   POST   /v1/customers/:id/phones          Add a phone
+//   DELETE /v1/customers/:id/phones/:childId Remove a phone
+//   POST   /v1/customers/:id/marks           Add a mark or a mark prefix
+//   DELETE /v1/customers/:id/marks/:childId  Remove a mark
+//   POST   /v1/customers/:id/merge           Merge a duplicate into this customer
 
 import {
-  CEO_ONLY,
   CustomerChildParams,
   CustomerQuery,
   IdParams,
@@ -19,7 +18,6 @@ import {
   NewCustomerRequest,
   NewMark,
   NewPhone,
-  READERS,
   UpdateCustomerRequest,
   type CustomerDetail,
   type CustomerMark,
@@ -101,7 +99,7 @@ async function requireCustomer(q: Queryable, id: string): Promise<void> {
 export async function customerRoutes(app: FastifyInstance): Promise<void> {
   const ctx = app.ctx;
 
-  app.get("/customers", { config: { access: READERS } }, async (request): Promise<Page<CustomerSummary>> => {
+  app.get("/customers", { config: { access: "signed_in" } }, async (request): Promise<Page<CustomerSummary>> => {
     const query = parse(CustomerQuery, request.query);
     const p = pager(query, "created_at", "customer_id::text");
     const params: unknown[] = [];
@@ -140,7 +138,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     return p.page(rows, toSummary);
   });
 
-  app.post("/customers", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.post("/customers", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const body = parse(NewCustomerRequest, request.body);
     const phones = body.phones.map((phone, index) => phoneOf(phone, `phones.${index}`));
     const marks = body.marks.map((mark, index) => ({ mark: markOf(mark.mark, `marks.${index}.mark`), match: mark.match }));
@@ -157,12 +155,12 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/customers/:id", { config: { access: READERS } }, async (request): Promise<CustomerDetail> => {
+  app.get("/customers/:id", { config: { access: "signed_in" } }, async (request): Promise<CustomerDetail> => {
     const { id } = parse(IdParams, request.params);
     return read(ctx, (q) => customerDetail(q, id));
   });
 
-  app.patch("/customers/:id", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.patch("/customers/:id", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(UpdateCustomerRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -188,7 +186,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/customers/:id/phones", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.post("/customers/:id/phones", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(NewPhone, request.body);
     const phone = phoneOf(body.phone, "phone");
@@ -200,7 +198,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/customers/:id/phones/:childId", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.delete("/customers/:id/phones/:childId", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id, childId } = parse(CustomerChildParams, request.params);
     return write(ctx, request, reply, async ({ q }) => {
       await requireCustomer(q, id);
@@ -210,7 +208,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/customers/:id/marks", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.post("/customers/:id/marks", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(NewMark, request.body);
     const mark = markOf(body.mark, "mark");
@@ -221,7 +219,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/customers/:id/marks/:childId", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.delete("/customers/:id/marks/:childId", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id, childId } = parse(CustomerChildParams, request.params);
     return write(ctx, request, reply, async ({ q }) => {
       await requireCustomer(q, id);
@@ -231,7 +229,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/customers/:id/merge", { config: { access: CEO_ONLY } }, async (request, reply): Promise<CustomerDetail> => {
+  app.post("/customers/:id/merge", { config: { access: "signed_in" } }, async (request, reply): Promise<CustomerDetail> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(MergeCustomerRequest, request.body);
     return write(ctx, request, reply, async ({ q }) => {

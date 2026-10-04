@@ -22,6 +22,27 @@ export const appNoActor = (sql: string) => psql(APP_NO_ACTOR, sql);
 /** As the role that owns the schema: migrations, and fixing something by hand. */
 export const owner = (sql: string) => psql(OWNER, sql);
 
+/**
+ * A second CEO account. Only CEO accounts can exist. A test that makes one
+ * switches it off again with retire(), so the other test files find one
+ * active CEO, as they expect.
+ */
+export function newCeo(name = "Second CEO"): string {
+  const id = randomUUID();
+  const phone = `+9647${Math.floor(Math.random() * 1e9).toString().padStart(9, "0")}`;
+  app(`insert into users (id, name, role, phone, created_by) values (${lit(id)}, ${lit(name)}, 'ceo', ${lit(phone)}, ${lit(USER)});`);
+  return id;
+}
+
+export const retire = (userId: string) => app(`update users set active = false where id = ${lit(userId)};`);
+
+/** An account that was switched off. It can do nothing. */
+export function switchedOff(name = "Switched off"): string {
+  const id = newCeo(name);
+  retire(id);
+  return id;
+}
+
 export function post(draft: EntryDraft, happenedAt = new Date("2026-10-02T09:00:00Z"), key: string = randomUUID()): string {
   return app(renderPost(draft, { happenedAt, createdBy: USER, idempotencyKey: key }));
 }

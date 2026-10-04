@@ -17,24 +17,20 @@ import {
   enterResult,
   handIn,
   health,
+  newCeo,
   newCustomer,
   newDriver,
   newRound,
   owner,
   refused,
   resultSql,
+  retire,
   roundOut,
+  switchedOff,
 } from "./helpers.ts";
 
 let n = 0;
 const phone = () => `+96478${(20000000 + ++n).toString()}`;
-
-function newUser(role: "ceo" | "owner" | "monitor"): string {
-  const id = randomUUID();
-  const who = role === "monitor" ? `null, ${lit(`screen${++n}x`)}` : `${lit(phone())}, null`;
-  app(`insert into users (id, name, role, phone, sign_in_name, created_by) values (${lit(id)}, ${lit(`Test ${role}`)}, ${lit(role)}, ${who}, ${lit(USER)});`);
-  return id;
-}
 
 /**
  * One statement for every table and function a person can change through, as
@@ -83,7 +79,7 @@ function everyChange(who: string): Record<string, string> {
     "add to a draft file": `insert into consignments (shipment_id, customer_id, amount_due_usd_cents) values (${lit(draft)}, ${lit(other)}, 1000);`,
     "confirm a file": `select gs_confirm_shipment(${lit(draft)}, ${u}, now());`,
     "confirm a prepaid file": `select gs_confirm_shipment(${lit(prepaidDraft)}, ${u}, now());`,   // posts no money at all
-    "add a user": `insert into users (name, role, phone, created_by) values ('Added', 'owner', ${lit(phone())}, ${u});`,
+    "add a user": `insert into users (name, role, phone, created_by) values ('Added', 'ceo', ${lit(phone())}, ${u});`,
     "open a dispute": `insert into disputes (consignment_id, kind, created_by) values (${lit(consignmentId)}, 'damaged', ${u});`,
     "allow an exception": `insert into exceptions (consignment_id, approved_by, reason) values (${lit(consignmentId)}, ${u}, 'ok');`,
     "create a round": `insert into rounds (driver_id, created_by) values (${lit(driver)}, ${u});`,
@@ -119,23 +115,18 @@ function refusedChange(what: string, run: () => unknown, pattern: RegExp): void 
 /** Statements that are not about money or goods and so are not the CEO's alone. */
 const OPEN_TO_ANY_USER = new Set(["record a request"]);
 
-test("the owner and the monitor can change nothing outside the ledger either", () => {
+test("an account that is switched off can change nothing, in the ledger or outside it", () => {
   const before = Number(app("select count(*) from audit_log;"));
-  const tried: string[] = [];
-  for (const role of ["owner", "monitor"] as const) {
-    const who = newUser(role);
-    tried.push(who);
-    const changes = everyChange(who);
-    for (const [what, sql] of Object.entries(changes)) {
-      if (OPEN_TO_ANY_USER.has(what)) continue;
-      refusedChange(what, () => appAs(who)(sql), /ceo_only/);
-      // And not by borrowing the CEO's name.
-      refusedChange(what, () => appAs(who)(sql.replaceAll(lit(who), lit(USER))), /ceo_only/);
-    }
+  const who = switchedOff();
+  const changes = everyChange(who);
+  for (const [what, sql] of Object.entries(changes)) {
+    if (OPEN_TO_ANY_USER.has(what)) continue;
+    refusedChange(what, () => appAs(who)(sql), /actor_unknown/);
+    // And not by borrowing the CEO's name.
+    refusedChange(what, () => appAs(who)(sql.replaceAll(lit(who), lit(USER))), /actor_unknown/);
   }
-  const ids = tried.map(lit).join(", ");
-  assert.equal(app(`select count(*) from audit_log where actor in (${ids});`), "0", "nothing was done under their names");
-  assert.equal(app(`select count(*) from journal_entries where created_by in (${ids});`), "0");
+  assert.equal(app(`select count(*) from audit_log where actor = ${lit(who)};`), "0", "nothing was done under his name");
+  assert.equal(app(`select count(*) from journal_entries where created_by = ${lit(who)};`), "0");
   assert.ok(Number(app("select count(*) from audit_log;")) > before, "setting the scene, as the CEO, was logged");
   assert.equal(health(), "");
 });
@@ -149,7 +140,7 @@ test("with nobody acting, the application can change nothing", () => {
 });
 
 test("a row names the CEO who is acting, not another one", () => {
-  const second = newUser("ceo");
+  const second = newCeo();
   // The second CEO is acting, and every statement names the first.
   const changes = everyChange(USER);
   const named = [
@@ -173,6 +164,10 @@ test("a row names the CEO who is acting, not another one", () => {
   // Take the far-future close back, so tests that count the vault later are not out of order.
   appAs(second)(`select gs_void_vault_close(id, ${lit(second)}, 'test') from vault_closes where voided_at is null and closed_at >= '2040-01-01';`);
   assert.equal(app("select count(*) from vault_closes where voided_at is null and closed_at >= '2040-01-01';"), "0");
+  // And the accounts this test made are switched off again, so one CEO is left for the other tests.
+  app("update users set active = false where name = 'Added' and active;");
+  retire(second);
+  assert.equal(app("select count(*) from users where active;"), "1");
   assert.equal(health(), "");
 });
 

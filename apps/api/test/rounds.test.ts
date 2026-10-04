@@ -9,9 +9,8 @@ import { RATE, result, Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, await seedUser(h, "owner"));
 await s.rate();
 
 const now = () => new Date().toISOString();
@@ -99,7 +98,7 @@ test("the board's round 14: four customers, one paid in dinars, one held, one on
   assert.equal((await s.account("vault_iqd")) - vaultBefore, 123_250);
   assert.equal(stopOf(handed.body, cRebwar).consignmentStatus, "closed");
 
-  assert.deepEqual((await s.get(`/v1/rounds/${id}`, ownerCookie)).body, handed.body, "the owner sees the same round");
+  assert.deepEqual((await s.get(`/v1/rounds/${id}`)).body, handed.body, "read again, it is the same round");
   await s.sound();
 });
 
@@ -309,7 +308,7 @@ test("drivers and carriers are added, renamed and switched off; a transport offi
 
   const renamed = await s.send("PATCH", `/v1/drivers/${driver.body.id}`, { name: `${name} Jr`, phone: null, active: false });
   assert.deepEqual(renamed.body, { id: driver.body.id, name: `${name} Jr`, phone: null, active: false });
-  const listed = (await s.get("/v1/drivers", ownerCookie)).body.items.find((d: { id: string }) => d.id === driver.body.id);
+  const listed = (await s.get("/v1/drivers")).body.items.find((d: { id: string }) => d.id === driver.body.id);
   assert.equal(listed.active, false);
   assert.equal((await s.send("PATCH", `/v1/drivers/${randomUUID()}`, { name: "x" })).status, 404);
 

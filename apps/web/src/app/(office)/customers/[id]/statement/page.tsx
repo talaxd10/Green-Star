@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Chip, Dialog, Empty, Field, Input, LinkButton, Loading, Money, PageHead, Problem, ReadProblem, Stat, Table, Td, Th } from "@/components/ui";
 import { api, withQuery } from "@/lib/api";
-import { useCan, useGet, useSave } from "@/lib/hooks";
+import { useGet, useSave } from "@/lib/hooks";
 import { CONSIGNMENT, day, dayTime, METHOD, phone, TRUST } from "@/lib/labels";
 import { formatMoney, formatRatePerDollar } from "@/lib/money";
 
@@ -18,7 +18,7 @@ function what(line: StatementLine): string {
 }
 
 /** The copy to send: the image, the PDF, the text, and "I sent it". */
-function Copy({ record, canSend, onClose }: { record: StatementRecord; canSend: boolean; onClose: () => void }) {
+function Copy({ record, onClose }: { record: StatementRecord; onClose: () => void }) {
   const toast = useToast();
   const [copied, setCopied] = useState(false);
   const sent = useSave(
@@ -76,7 +76,7 @@ function Copy({ record, canSend, onClose }: { record: StatementRecord; canSend: 
             <Button tone="quiet" onClick={onClose}>
               Close
             </Button>
-            {canSend && record.sentAt === null ? (
+            {record.sentAt === null ? (
               <Button tone="primary" busy={sent.saving} onClick={() => void sent.save(null)}>
                 I sent it
               </Button>
@@ -90,7 +90,6 @@ function Copy({ record, canSend, onClose }: { record: StatementRecord; canSend: 
 
 export default function StatementPage() {
   const { id } = useParams<{ id: string }>();
-  const canMake = useCan("enter_money");
   const [from, setFrom] = useState("");
   const [corrections, setCorrections] = useState(false);
   const [showing, setShowing] = useState<StatementRecord | null>(null);
@@ -126,11 +125,9 @@ export default function StatementPage() {
         }
       >
         <LinkButton href={`/customers/${id}`}>His page</LinkButton>
-        {canMake ? (
-          <Button tone="primary" busy={make.saving} onClick={() => void make.save(null)}>
-            Make a statement to send
-          </Button>
-        ) : null}
+        <Button tone="primary" busy={make.saving} onClick={() => void make.save(null)}>
+          Make a statement to send
+        </Button>
       </PageHead>
       <div className="mb-4">
         <Problem of={make.problem} />
@@ -278,7 +275,7 @@ export default function StatementPage() {
             {copies.data === undefined ? (
               <Loading />
             ) : copies.data.items.length === 0 ? (
-              <Empty title="None yet">{canMake ? "“Make a statement to send” draws one from what is on this screen now." : "The CEO makes one to send."}</Empty>
+              <Empty title="None yet">“Make a statement to send” draws one from what is on this screen now.</Empty>
             ) : (
               <ul className="divide-y divide-rule">
                 {copies.data.items.map((record) => (
@@ -300,7 +297,7 @@ export default function StatementPage() {
         </div>
       </div>
 
-      {showing ? <Copy record={showing} canSend={canMake} onClose={() => setShowing(null)} /> : null}
+      {showing ? <Copy record={showing} onClose={() => setShowing(null)} /> : null}
     </>
   );
 }

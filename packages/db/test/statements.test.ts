@@ -6,19 +6,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { iqd, officePayment, usd, walletPayment } from "@green-star/domain";
 import { lit } from "../src/index.ts";
-import { USER, app, appAs, appNoActor, charge, customerBalance, health, makeTrusted, newCustomer, owner, post, refused, setRate } from "./helpers.ts";
+import { USER, app, appAs, appNoActor, charge, customerBalance, health, makeTrusted, newCeo, newCustomer, owner, post, refused, retire, setRate, switchedOff } from "./helpers.ts";
 
 // The statement tests keep to their own days so no other test file changes their rates.
 setRate("2027-01-07", 145000);
 const at = (day: number, hour = 9) => new Date(Date.UTC(2027, 0, day, hour));
-
-let n = 0;
-function newUser(role: "ceo" | "owner" | "monitor"): string {
-  const id = randomUUID();
-  const who = role === "monitor" ? `null, ${lit(`stmtscreen${++n}`)}` : `${lit(`+96473${(40000000 + ++n).toString()}`)}, null`;
-  app(`insert into users (id, name, role, phone, sign_in_name, created_by) values (${lit(id)}, ${lit(`Statement ${role}`)}, ${lit(role)}, ${who}, ${lit(USER)});`);
-  return id;
-}
 
 /** "line_no:what:change:balance" per line, with r for a reversal. */
 const lines = (customerId: string, corrections = false) =>
@@ -229,22 +221,20 @@ test("a statement is marked as sent once, and nothing else about it ever changes
   assert.equal(sent(), first);
 });
 
-test("only the CEO makes a statement or marks it sent, under his own name", () => {
+test("a statement is made and marked sent by an active CEO, under his own name", () => {
   const customer = newCustomer("Whose Statement");
   charge(customer, 4000n, at(3));
   const id = randomUUID();
   app(record(customer, 4000, id));
 
-  for (const role of ["owner", "monitor"] as const) {
-    const who = newUser(role);
-    refused(() => appAs(who)(record(customer, 4000, randomUUID(), who)), /ceo_only/);
-    refused(() => appAs(who)(record(customer, 4000, randomUUID(), USER)), /ceo_only/);
-    refused(() => appAs(who)(`select gs_mark_statement_sent(${lit(id)}, ${lit(who)});`), /ceo_only/);
-    refused(() => appAs(who)(`select gs_mark_statement_sent(${lit(id)}, ${lit(USER)});`), /ceo_only/);
-  }
+  const off = switchedOff();
+  refused(() => appAs(off)(record(customer, 4000, randomUUID(), off)), /actor_unknown/);
+  refused(() => appAs(off)(record(customer, 4000, randomUUID(), USER)), /actor_unknown/);
+  refused(() => appAs(off)(`select gs_mark_statement_sent(${lit(id)}, ${lit(off)});`), /actor_unknown/);
+  refused(() => appAs(off)(`select gs_mark_statement_sent(${lit(id)}, ${lit(USER)});`), /actor_unknown/);
   refused(() => appNoActor(record(customer, 4000)), /actor_required/);
   refused(() => appNoActor(`select gs_mark_statement_sent(${lit(id)}, ${lit(USER)});`), /actor_required/);
-  const second = newUser("ceo");
+  const second = newCeo();
   refused(() => appAs(second)(record(customer, 4000)), /actor_mismatch/);
   refused(() => appAs(second)(`select gs_mark_statement_sent(${lit(id)}, ${lit(USER)});`), /actor_mismatch/);
   assert.equal(app(`select count(*) from statements where customer_id = ${lit(customer)};`), "1");
@@ -253,7 +243,7 @@ test("only the CEO makes a statement or marks it sent, under his own name", () =
   appAs(second)(`select gs_mark_statement_sent(${lit(id)}, ${lit(second)});`);
   assert.equal(app(`select sent_by from statements where id = ${lit(id)};`), second);
   // Switched off again, so the other test files find one CEO, as they expect.
-  app(`update users set active = false where id = ${lit(second)};`);
+  retire(second);
 });
 
 test("the list of who to send a statement to: trusted customers who owe, and when each was last sent one", () => {

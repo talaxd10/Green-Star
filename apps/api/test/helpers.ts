@@ -2,7 +2,6 @@
 // routes, against a real Postgres. Nothing is mocked.
 
 import { randomInt, randomUUID } from "node:crypto";
-import type { Role } from "@green-star/contracts";
 import { requireEnv } from "@green-star/db";
 import type { FastifyInstance } from "fastify";
 import pg from "pg";
@@ -115,7 +114,6 @@ export async function call(app: FastifyInstance, method: string, url: string, op
   };
 }
 
-let counter = 0;
 /** A phone number no other test uses. */
 export const nextPhone = () => `+96475${randomInt(10_000_000, 99_999_999)}`;
 
@@ -123,35 +121,27 @@ export const PASSWORD = "correct horse battery";
 
 export interface Seeded {
   id: string;
-  phone: string | null;
-  signInName: string | null;
+  phone: string;
   password: string;
 }
 
-/** Puts a user straight into the database, the way create-ceo does for the first CEO. */
-export async function seedUser(h: Harness, role: Role, name = `Test ${role}`, password = PASSWORD): Promise<Seeded> {
+/** Puts a CEO's account straight into the database, the way create-ceo does. There is no other kind. */
+export async function seedUser(h: Harness, name = "Test CEO", password = PASSWORD): Promise<Seeded> {
   const id = randomUUID();
-  const phone = role === "monitor" ? null : nextPhone();
-  const signInName = role === "monitor" ? `screen${randomInt(1_000_000, 9_999_999)}x${++counter}` : null;
-  await h.owner.query("insert into users (id, name, role, phone, sign_in_name) values ($1, $2, $3, $4, $5)", [
-    id,
-    name,
-    role,
-    phone,
-    signInName,
-  ]);
+  const phone = nextPhone();
+  await h.owner.query("insert into users (id, name, phone) values ($1, $2, $3)", [id, name, phone]);
   await h.owner.query("insert into user_credentials (user_id, password_hash) values ($1, $2)", [
     id,
     await hashPassword(password, TEST_COST),
   ]);
-  return { id, phone, signInName, password };
+  return { id, phone, password };
 }
 
 /** Signs in and returns the session cookie. */
 export async function signIn(h: Harness, user: Seeded, options: CallOptions = {}): Promise<string> {
   const reply = await call(h.app, "POST", "/v1/auth/login", {
     ...options,
-    body: { phone: user.phone ?? user.signInName, password: user.password },
+    body: { phone: user.phone, password: user.password },
   });
   if (reply.status !== 200 || reply.cookie === null) {
     throw new Error(`sign-in failed: ${reply.status} ${JSON.stringify(reply.body)}`);
@@ -159,12 +149,8 @@ export async function signIn(h: Harness, user: Seeded, options: CallOptions = {}
   return reply.cookie;
 }
 
-/** One signed-in user of each role. */
-export async function everyRole(h: Harness): Promise<Record<Role, { user: Seeded; cookie: string }>> {
-  const out = {} as Record<Role, { user: Seeded; cookie: string }>;
-  for (const role of ["ceo", "owner", "monitor"] as const) {
-    const user = await seedUser(h, role);
-    out[role] = { user, cookie: await signIn(h, user) };
-  }
-  return out;
+/** A CEO's account, signed in. */
+export async function signedIn(h: Harness, name = "Test CEO"): Promise<{ user: Seeded; cookie: string }> {
+  const user = await seedUser(h, name);
+  return { user, cookie: await signIn(h, user) };
 }

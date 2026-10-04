@@ -1,24 +1,22 @@
 // Statements: what a customer owes and how it came about, and the copy the
 // CEO makes to send him.
 //
-//   GET  /v1/customers/:id/statement         CEO, owner  Every charge and payment with a running balance
-//   POST /v1/customers/:id/statement/export  CEO         Make the copy to send: image, PDF and text
-//   GET  /v1/customers/:id/statements        CEO, owner  The copies made for this customer, newest first
-//   GET  /v1/statements                      CEO, owner  Who to send one to: trusted customers who owe
-//   GET  /v1/statements/:id                  CEO, owner  One copy, as it was made
-//   GET  /v1/statements/:id/image            CEO, owner  It, as a PNG
-//   GET  /v1/statements/:id/pdf              CEO, owner  It, as a PDF
-//   POST /v1/statements/:id/sent             CEO         He sent it
+//   GET  /v1/customers/:id/statement         Every charge and payment with a running balance
+//   POST /v1/customers/:id/statement/export  Make the copy to send: image, PDF and text
+//   GET  /v1/customers/:id/statements        The copies made for this customer, newest first
+//   GET  /v1/statements                      Who to send one to: trusted customers who owe
+//   GET  /v1/statements/:id                  One copy, as it was made
+//   GET  /v1/statements/:id/image            It, as a PNG
+//   GET  /v1/statements/:id/pdf              It, as a PDF
+//   POST /v1/statements/:id/sent             He sent it
 //
 // Nothing here works anything out. The lines and their running balance come
 // from gs_customer_statement; the image, the PDF and the text are all made
 // from the one copy the database keeps.
 
 import {
-  CEO_ONLY,
   ExportStatementRequest,
   IdParams,
-  READERS,
   StatementQuery,
   type Statement,
   type StatementLine,
@@ -165,13 +163,13 @@ async function snapshot(q: Queryable, id: string): Promise<Statement> {
 export async function statementRoutes(app: FastifyInstance): Promise<void> {
   const ctx = app.ctx;
 
-  app.get("/customers/:id/statement", { config: { access: READERS } }, async (request): Promise<Statement> => {
+  app.get("/customers/:id/statement", { config: { access: "signed_in" } }, async (request): Promise<Statement> => {
     const { id } = parse(IdParams, request.params);
     const query = parse(StatementQuery, request.query);
     return read(ctx, (q) => buildStatement(q, id, { from: query.from, corrections: query.corrections }));
   });
 
-  app.post("/customers/:id/statement/export", { config: { access: CEO_ONLY } }, async (request, reply): Promise<StatementRecord> => {
+  app.post("/customers/:id/statement/export", { config: { access: "signed_in" } }, async (request, reply): Promise<StatementRecord> => {
     const { id } = parse(IdParams, request.params);
     const body = parse(ExportStatementRequest, request.body);
     return write(ctx, request, reply, async ({ q, auth }) => {
@@ -190,13 +188,13 @@ export async function statementRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/customers/:id/statements", { config: { access: READERS } }, async (request): Promise<{ items: StatementRecord[] }> => {
+  app.get("/customers/:id/statements", { config: { access: "signed_in" } }, async (request): Promise<{ items: StatementRecord[] }> => {
     const { id } = parse(IdParams, request.params);
     const rows = await read(ctx, (q) => q.query(`${RECORDS} where s.customer_id = $1 order by s.as_of desc, s.id limit 30`, [id]));
     return { items: rows.map(toRecord) };
   });
 
-  app.get("/statements", { config: { access: READERS } }, async (): Promise<{ items: StatementListItem[] }> => {
+  app.get("/statements", { config: { access: "signed_in" } }, async (): Promise<{ items: StatementListItem[] }> => {
     const rows = await read(ctx, (q) =>
       q.query(
         `select customer_id, display_name, phone, balance_usd_cents, credit_limit_usd_cents, over_limit,
@@ -207,12 +205,12 @@ export async function statementRoutes(app: FastifyInstance): Promise<void> {
     return { items: rows.map((row) => camel<StatementListItem>(row, { display_name: "customerName" })) };
   });
 
-  app.get("/statements/:id", { config: { access: READERS } }, async (request): Promise<StatementRecord> => {
+  app.get("/statements/:id", { config: { access: "signed_in" } }, async (request): Promise<StatementRecord> => {
     const { id } = parse(IdParams, request.params);
     return read(ctx, (q) => record(q, id));
   });
 
-  app.get("/statements/:id/image", { config: { access: READERS } }, async (request, reply) => {
+  app.get("/statements/:id/image", { config: { access: "signed_in" } }, async (request, reply) => {
     const { id } = parse(IdParams, request.params);
     const made = await read(ctx, (q) => snapshot(q, id));
     const png = await ctx.renderer.image(statementHtml(made));
@@ -223,7 +221,7 @@ export async function statementRoutes(app: FastifyInstance): Promise<void> {
       .send(png);
   });
 
-  app.get("/statements/:id/pdf", { config: { access: READERS } }, async (request, reply) => {
+  app.get("/statements/:id/pdf", { config: { access: "signed_in" } }, async (request, reply) => {
     const { id } = parse(IdParams, request.params);
     const made = await read(ctx, (q) => snapshot(q, id));
     const pdf = await ctx.renderer.pdf(statementHtml(made));
@@ -234,7 +232,7 @@ export async function statementRoutes(app: FastifyInstance): Promise<void> {
       .send(pdf);
   });
 
-  app.post("/statements/:id/sent", { config: { access: CEO_ONLY } }, async (request, reply): Promise<StatementRecord> => {
+  app.post("/statements/:id/sent", { config: { access: "signed_in" } }, async (request, reply): Promise<StatementRecord> => {
     const { id } = parse(IdParams, request.params);
     return write(ctx, request, reply, async ({ q, auth }) => {
       await q.query("select gs_mark_statement_sent($1, $2)", [id, auth.user.id]);

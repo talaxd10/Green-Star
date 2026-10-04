@@ -9,9 +9,8 @@ import { RATE, result, Scene, unique } from "./scene.ts";
 const h = await start();
 after(() => h.close());
 
-const ceo = await seedUser(h, "ceo", "Sarkar");
+const ceo = await seedUser(h, "Sarkar");
 const s = new Scene(h, await signIn(h, ceo));
-const ownerCookie = await signIn(h, await seedUser(h, "owner"));
 await s.rate();
 
 const now = () => new Date().toISOString();
@@ -192,7 +191,7 @@ test("cash out needs a category and a reason, and money to China pays down what 
 
   assert.equal((await s.account("vault_iqd")) - before.iqd, -40_000);
   assert.equal((await s.account("vault_usd")) - before.usd, -250_000);
-  const after = (await s.get("/v1/china-account", ownerCookie)).body;
+  const after = (await s.get("/v1/china-account")).body;
   assert.equal(after.sentUsdCents - before.china.sentUsdCents, 250_000);
   assert.equal(after.owedUsdCents - before.china.owedUsdCents, -250_000);
   assert.equal(after.lines[0].entryId, china.body.entryId);
@@ -311,7 +310,7 @@ test("the ledger is read by customer, by account, by kind and by day, a page at 
   for (const amount of [1_000, 2_000, 3_000]) {
     await s.send("POST", "/v1/payments", { customerId: a, received: { amount, currency: "USD" }, method: "office_cash" });
   }
-  const his = (await s.get(`/v1/ledger?customerId=${a}`, ownerCookie)).body.items;
+  const his = (await s.get(`/v1/ledger?customerId=${a}`)).body.items;
   assert.deepEqual(his.map((e: { kind: string }) => e.kind), ["office_payment", "office_payment", "office_payment", "file_confirmed"], "newest first");
   for (const entry of his) {
     const sum = entry.lines.reduce((total: number, line: { amount: number }) => total + line.amount, 0);
@@ -338,7 +337,7 @@ test("the ledger is read by customer, by account, by kind and by day, a page at 
 });
 
 test("the vault is closed by counting it; a gap needs a note; a wrong count is taken back", async () => {
-  const vault = (await s.get("/v1/vault", ownerCookie)).body;
+  const vault = (await s.get("/v1/vault")).body;
   const usd = vault.currencies.find((c: { currency: string }) => c.currency === "USD");
   const iqd = vault.currencies.find((c: { currency: string }) => c.currency === "IQD");
   assert.deepEqual(vault.currencies.map((c: { currency: string }) => c.currency), ["USD", "IQD"]);
@@ -383,13 +382,13 @@ test("the vault is closed by counting it; a gap needs a note; a wrong count is t
   assert.equal((await s.send("POST", `/v1/vault/closes/${randomUUID()}/void`, { reason: "x" })).status, 404);
 });
 
-test("payments are listed with how each was paid, and the owner reads every money screen", async () => {
+test("payments are listed with how each was paid, and every money screen answers", async () => {
   const a = await s.customer(unique("Payer "));
   await s.file([[a, 9_000]]);
   await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 1_000, currency: "USD" }, method: "fastpay" });
   await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 14_500, currency: "IQD" }, method: "office_cash" });
 
-  const list = (await s.get(`/v1/payments?customerId=${a}`, ownerCookie)).body.items;
+  const list = (await s.get(`/v1/payments?customerId=${a}`)).body.items;
   assert.deepEqual(list.map((p: Record<string, unknown>) => [p.method, p.receivedAmount, p.receivedCurrency, p.creditedUsdCents]), [
     ["office_cash", 14_500, "IQD", 1_000],
     ["fastpay", 1_000, "USD", 1_000],
@@ -411,9 +410,9 @@ test("payments are listed with how each was paid, and the owner reads every mone
   }
 
   for (const url of ["/v1/fx-rates/today", "/v1/fx-rates", "/v1/payments", "/v1/cash-outs", "/v1/vault", "/v1/ledger", "/v1/accounts", "/v1/china-account"]) {
-    assert.equal((await s.get(url, ownerCookie)).status, 200, url);
+    assert.equal((await s.get(url)).status, 200, url);
   }
-  const accounts = (await s.get("/v1/accounts", ownerCookie)).body.items;
+  const accounts = (await s.get("/v1/accounts")).body.items;
   assert.ok(accounts.every((x: { kind: string }) => x.kind !== "customer"), "customer accounts are on the customers screen");
   assert.ok(accounts.some((x: { code: string }) => x.code === "china_payable"));
 });

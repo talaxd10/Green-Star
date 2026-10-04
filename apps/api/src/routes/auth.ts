@@ -1,11 +1,11 @@
 // Signing in and out.
 //
-//   POST /v1/auth/login     everyone   Sign in with phone + password
-//   POST /v1/auth/logout    everyone   End this device's session
-//   GET  /v1/me             everyone   Who I am and what I can do
-//   POST /v1/auth/password  CEO, owner Change my own password
+//   POST /v1/auth/login     Sign in with phone + password
+//   POST /v1/auth/logout    End this device's session
+//   GET  /v1/me             Who I am
+//   POST /v1/auth/password  Change my password
 
-import { ChangePasswordRequest, EVERYONE, READERS, SignInRequest, type Me } from "@green-star/contracts";
+import { ChangePasswordRequest, SignInRequest, type Me } from "@green-star/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { authOf } from "../app.ts";
 import { lockSignIn, recordAttempt, secondsToWait } from "../auth/limits.ts";
@@ -60,9 +60,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (wait !== null) return { kind: "wait" as const, wait };
 
       const row = await q.first<CredentialRow>(
-        `select u.id, u.name, u.role, u.phone, u.sign_in_name, u.active, c.password_hash
+        `select u.id, u.name, u.phone, u.active, c.password_hash
          from users u left join user_credentials c on c.user_id = u.id
-         where u.active and (u.phone = $1 or u.sign_in_name = $1)`,
+         where u.active and u.phone = $1`,
         [key],
       );
       // Always check a hash, so an unknown phone takes as long as a wrong password.
@@ -95,12 +95,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.get("/me", { config: { access: EVERYONE } }, async (request): Promise<Me> => toMe(authOf(request)));
+  app.get("/me", { config: { access: "signed_in" } }, async (request): Promise<Me> => toMe(authOf(request)));
 
-  app.post("/auth/password", { config: { access: READERS, keyless: true } }, async (request, reply) => {
+  app.post("/auth/password", { config: { access: "signed_in", keyless: true } }, async (request, reply) => {
     const auth = authOf(request);
     const body = parse(ChangePasswordRequest, request.body);
-    const key = auth.user.phone ?? auth.user.signInName ?? auth.user.id;
+    const key = auth.user.phone;
     const ip = request.ip ?? null;
     const nextHash = await hashPassword(body.next, config.scrypt);
 

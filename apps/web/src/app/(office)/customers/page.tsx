@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button, Card, Chip, Dialog, Empty, Field, FormActions, Input, LimitBar, Loading, Money, PageHead, Problem, ReadProblem, Segmented, Select, Table, Td, Th } from "@/components/ui";
 import { api, withQuery } from "@/lib/api";
-import { useCan, useDebounced, usePages, useSave } from "@/lib/hooks";
+import { useDebounced, usePages, useSave } from "@/lib/hooks";
 import { phone, TRUST } from "@/lib/labels";
 
 type Show = "all" | "trusted" | "over_limit" | "owing";
@@ -72,7 +72,6 @@ function NewCustomer({ open, onClose }: { open: boolean; onClose: () => void }) 
 }
 
 export default function CustomersPage() {
-  const canChange = useCan("enter_money");
   const [text, setText] = useState("");
   const [show, setShow] = useState<Show>("all");
   const [adding, setAdding] = useState(false);
@@ -89,11 +88,9 @@ export default function CustomersPage() {
   return (
     <>
       <PageHead title="Customers" hint="Everyone who ships with Green Star. Search by phone, shipping mark or any part of a name.">
-        {canChange ? (
-          <Button tone="primary" onClick={() => setAdding(true)}>
-            New customer
-          </Button>
-        ) : null}
+        <Button tone="primary" onClick={() => setAdding(true)}>
+          New customer
+        </Button>
       </PageHead>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">

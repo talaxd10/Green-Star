@@ -35,7 +35,6 @@ export class ApiError extends Error {
 }
 
 export const notSignedIn = () => new ApiError(401, "not_signed_in", "Sign in first");
-export const notAllowed = () => new ApiError(403, "not_allowed", "Your account cannot do this");
 export const notFound = (what = "That") => new ApiError(404, "not_found", `${what} was not found`);
 
 export function invalidRequest(error: z.ZodError): ApiError {
@@ -98,7 +97,6 @@ const RULES: Record<string, string> = {
   users_name_not_blank: "Enter a name",
   settings_held_days: "Held-in-car days is between 1 and 60",
   settings_wallet_days: "Wallet check days is between 1 and 60",
-  settings_widgets: "That is not a widget the office screen can show",
 };
 
 /**

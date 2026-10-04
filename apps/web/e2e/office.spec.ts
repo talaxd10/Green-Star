@@ -5,8 +5,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const PASSWORD = "office password 1";
-const OWNER_PASSWORD = "the owner's password";
-const MONITOR_PASSWORD = "the office screen 1";
 
 test.describe.configure({ mode: "serial" });
 
@@ -360,7 +358,7 @@ test("a trusted customer's statement is made to send, as an image, a PDF and a t
   await expect(page.getByText("Everyone on this list was sent a statement this week.")).toBeVisible();
 });
 
-test("the CEO sets the checks and picks what the office screen shows; the screen shows no money", async () => {
+test("the CEO sets the checks, and signs out a device he no longer uses", async () => {
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByLabel("Held in the car, days").fill("0");
   await expect(page.getByRole("button", { name: "Save the checks" })).toBeDisabled();
@@ -369,128 +367,69 @@ test("the CEO sets the checks and picks what the office screen shows; the screen
   await expect(page.getByText("Settings saved")).toBeVisible();
   await expect(page.getByLabel("Held in the car, days")).toHaveValue("5");
 
-  await page.getByRole("button", { name: "Add an account" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Account for").selectOption("monitor");
-  await dialog.getByLabel("Name", { exact: true }).fill("Office TV");
-  await dialog.getByLabel("Sign-in name").fill("office-tv");
-  await dialog.getByLabel("Password").fill(MONITOR_PASSWORD);
-  await dialog.getByRole("button", { name: "Add the account" }).click();
-  await expect(page.getByText("Office TV")).toBeVisible();
-
-  await page.getByLabel("Files", { exact: false }).first().uncheck();
-  await page.getByRole("button", { name: "Save the screen" }).click();
-  await expect(page.getByText("The office screen is updated")).toBeVisible();
-
-  await page.getByRole("link", { name: "Open the screen" }).click();
-  await expect(page).toHaveURL(/\/monitor$/);
-  await expect(page.getByRole("heading", { name: "Rounds" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Held in the car" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Files" })).toHaveCount(0);
-  const round = page.getByRole("listitem").filter({ hasText: "Round 2" });
-  await expect(round).toContainText("Karwan");
-  await expect(round).toContainText("Back");
-  await expect(round).toContainText("1 of 1 stops done");
-  await expect(page.getByText("Nothing is held.")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("$");
-  await expect(page.locator("body")).not.toContainText("IQD");
-
-  await page.getByRole("link", { name: "Back to the office" }).click();
-  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
-});
-
-test("the owner is given an account, sees every screen, and can change nothing", async () => {
-  await page.getByRole("link", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "Add an account" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Name").fill("Kak Azad");
-  await dialog.getByLabel("Phone number").fill("0770 000 0002");
-  await dialog.getByLabel("Password").fill(OWNER_PASSWORD);
-  await dialog.getByRole("button", { name: "Add the account" }).click();
-  await expect(page.getByText("Kak Azad")).toBeVisible();
-
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/sign-in/);
-  await signIn("0770 000 0002", OWNER_PASSWORD);
-  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
-  await expect(page.getByText("Owner · read only")).toBeVisible();
-  // He sees the open alert, and cannot resolve it.
-  await expect(page.getByText("FIB, dollars: the app shows $5.00 less than the books")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Resolve" })).toHaveCount(0);
-
-  // He reads the statement that was sent, and makes none.
-  await page.getByRole("link", { name: "Statements" }).click();
-  await page.getByRole("row", { name: /Dara M\./ }).getByRole("link", { name: "Statement" }).click();
-  await expect(page.getByRole("heading", { name: "Dara M." })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Make a statement to send" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Open" }).click();
-  await expect(page.getByRole("dialog").getByLabel("Statement text")).toContainText("You owe $210.00.");
-  await expect(page.getByRole("dialog").getByRole("button", { name: "I sent it" })).toHaveCount(0);
-  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).first().click();
-
-  await page.getByRole("link", { name: "Customers" }).click();
-  await expect(page.getByRole("heading", { name: "Customers" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "New customer" })).toHaveCount(0);
-
-  await page.getByRole("link", { name: "Dara M." }).click();
-  await expect(page.getByText("$210.00").first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "Take a payment" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Trust and limit" })).toHaveCount(0);
-
-  await page.getByRole("link", { name: "Money" }).click();
-  await expect(page.getByText("Latest payments")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Take the payment" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Reverse" })).toHaveCount(0);
-  await expect(page.getByRole("row", { name: /FIB, dollars/ })).toContainText("$15.00");
-  await expect(page.getByRole("button", { name: "Check" })).toHaveCount(0);
-
-  await page.getByRole("link", { name: "Vault close" }).click();
-  await expect(page.getByText("The CEO closes the vault")).toBeVisible();
-
-  await page.getByRole("link", { name: "Rounds" }).click();
-  await expect(page.getByRole("link", { name: "New round" })).toHaveCount(0);
-  await page.getByRole("link", { name: "Round 1" }).click();
-  await expect(page.getByText("The CEO counts the cash in.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save the results" })).toHaveCount(0);
-
-  await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByRole("heading", { name: "My password" })).toBeVisible();
+  // The system is his alone: there is no account to add and no office screen to set up.
   await expect(page.getByRole("button", { name: "Add an account" })).toHaveCount(0);
-  await expect(page.getByLabel("Held in the car, days")).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save the checks" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Save the screen" })).toHaveCount(0);
+  await expect(page.getByText("Office monitor")).toHaveCount(0);
+  const devices = page.locator("section").filter({ has: page.getByRole("heading", { name: "Signed-in devices" }) });
+  await expect(devices).toContainText("Sarkar");
+  await expect(devices).toContainText("0770 000 0001");
+  await expect(devices.getByText("this device")).toHaveCount(1);
+  await expect(devices.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 
-  // Even asked directly, the API refuses him.
-  const refused = await page.evaluate(async () => {
-    const response = await fetch("/v1/customers", {
-      method: "POST",
-      headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
-      body: JSON.stringify({ name: "Added by the owner" }),
-    });
-    return { status: response.status, body: await response.json() };
-  });
-  expect(refused).toEqual({ status: 403, body: { code: "not_allowed", message: "Your account cannot do this" } });
+  // He signs in on a second device. It shows up here, and he signs it out from this one.
+  const other = await page.context().browser()!.newContext();
+  const phone = await other.newPage();
+  await phone.goto("/sign-in");
+  await phone.getByLabel("Phone number").fill("0770 000 0001");
+  await phone.getByLabel("Password").fill(PASSWORD);
+  await phone.getByRole("button", { name: "Sign in" }).click();
+  await expect(phone.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(devices.getByRole("button", { name: "Sign out" })).toHaveCount(1);
+  await devices.getByRole("button", { name: "Sign out" }).click();
+  await expect(devices.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+  await expect(devices.getByText("this device")).toHaveCount(1);
+  await phone.goto("/customers");
+  await expect(phone).toHaveURL(/\/sign-in/);
+  await other.close();
 });
 
-test("the office monitor signs in to its own screen and reaches nothing else", async () => {
+test("signed out, nothing opens: every screen asks him to sign in, and the API answers nobody", async () => {
+  // The office screen is gone, whoever asks for it.
+  await page.goto("/monitor");
+  await expect(page.getByText("404")).toBeVisible();
+  await page.goto("/today");
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
+
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in/);
-  await signIn("office-tv", MONITOR_PASSWORD);
-  await expect(page).toHaveURL(/\/monitor$/);
-  await expect(page.getByRole("heading", { name: "Rounds" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to the office" })).toHaveCount(0);
-
-  // The office itself sends it back to its screen.
-  await page.goto("/customers");
-  await expect(page).toHaveURL(/\/monitor$/);
-  await expect(page.getByRole("heading", { name: "Rounds" })).toBeVisible();
-
+  for (const screen of ["/today", "/customers", "/money", "/vault", "/settings"]) {
+    await page.goto(screen);
+    await expect(page).toHaveURL(new RegExp(`/sign-in\\?next=${encodeURIComponent(screen)}`));
+  }
   const refused = await page.evaluate(async () => {
     const out: Record<string, number> = {};
-    for (const url of ["/v1/customers", "/v1/alerts", "/v1/reports/today", "/v1/vault", "/v1/settings"]) {
+    for (const url of ["/v1/me", "/v1/customers", "/v1/alerts", "/v1/reports/today", "/v1/vault", "/v1/settings", "/v1/users", "/v1/monitor"]) {
       out[url] = (await fetch(url)).status;
     }
+    const added = await fetch("/v1/customers", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+      body: JSON.stringify({ name: "Added by nobody" }),
+    });
+    out["POST /v1/customers"] = added.status;
     return out;
   });
-  expect(refused).toEqual({ "/v1/customers": 403, "/v1/alerts": 403, "/v1/reports/today": 403, "/v1/vault": 403, "/v1/settings": 403 });
+  expect(refused).toEqual({
+    "/v1/me": 401,
+    "/v1/customers": 401,
+    "/v1/alerts": 401,
+    "/v1/reports/today": 401,
+    "/v1/vault": 401,
+    "/v1/settings": 401,
+    "/v1/users": 401,
+    "/v1/monitor": 404,
+    "POST /v1/customers": 401,
+  });
 });
