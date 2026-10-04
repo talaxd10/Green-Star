@@ -92,19 +92,23 @@ test("the arithmetic in the database is the arithmetic in the app", () => {
   const rows: string[] = [];
   const expected: string[] = [];
   let settled = 0;
-  for (let run = 0; run < 400; run += 1) {
+  const either = [0, 0];
+  for (let run = 0; run < 1200; run += 1) {
     const rate = 130000 + next(30000);
     const first = BigInt(next(4) === 0 ? 0 : 1 + next(200000));
-    const all = first + BigInt(next(3) === 0 ? 0 : 1 + next(200000));
+    // Often only a few cents more than the goods: then the dinars can settle either, and the nearer one wins.
+    const all = first + BigInt(next(3) === 0 ? 0 : next(2) === 0 ? 1 + next(60) : 1 + next(200000));
     const target = next(3) === 0 ? all : first;
     const amount = next(2) === 0 ? usdCentsToIqd(target, rate) - 700n + BigInt(next(1400)) : BigInt(250 * (1 + next(3000)));
     if (amount <= 0n) continue;
     rows.push(`(${rows.length}, ${amount}::bigint, ${rate}, ${first}::bigint, ${all}::bigint)`);
     const credit = dinarCredit(amount, rate, [first, all]);
     if (credit !== iqdToUsdCents(amount, rate)) settled += 1;
+    if (dinarCredit(amount, rate, [first]) === first && dinarCredit(amount, rate, [all]) === all && first !== all && first > 0n) either[credit === first ? 0 : 1] = (either[credit === first ? 0 : 1] as number) + 1;
     expected.push(`${credit}|${usdCentsToIqd(first, rate)}`);
   }
   assert.ok(settled > 50 && settled < rows.length - 50, `${settled} of ${rows.length} settled`);
+  assert.ok((either[0] as number) >= 5 && (either[1] as number) >= 5, `could settle either: ${either[0]} went to the goods, ${either[1]} to everything`);
   const got = app(
     `select gs_dinar_credit(d, r, f, a) || '|' || gs_usd_cents_to_iqd(f, r)
      from (values ${rows.join(", ")}) as t (n, d, r, f, a) order by n;`,
@@ -143,6 +147,36 @@ test("dinars are rounded only when they settle what is owed", () => {
   refused(() => postFor(dinars(older, 209000n, 13300n), old), /rounding_invalid/);    // for the wrong one
   postFor(dinars(older, 209000n, 13300n), now);
   assert.deepEqual([customerBalance(older), remaining(old), remaining(now)], [6700n, 6700n, 0n]);
+  assert.equal(health(), "");
+});
+
+test("dinars that could settle the goods or everything settle the nearer one, at the door and at the office", () => {
+  // $62.00 on today's goods and 30 cents left from an older file. At 1,570: $62.00 is 97,340 IQD, $62.30 is 97,811.
+  const owing = (name: string) => {
+    const customer = newCustomer(name);
+    const older = charge(customer, 30n, at(4)).consignmentId;
+    const today = charge(customer, 6200n, at(5)).consignmentId;
+    return { customer, older, today };
+  };
+  assert.deepEqual([usdCentsToIqd(6200n, RATE), usdCentsToIqd(6230n, RATE)], [97340n, 97811n]);
+
+  // 97,700 IQD: 111 from everything, 360 from the goods. Everything is settled.
+  const all = owing("Nearer Everything");
+  postFor(dinars(all.customer, 97700n, 6230n), all.today);
+  assert.deepEqual([customerBalance(all.customer), remaining(all.today), remaining(all.older)], [0n, 0n, 0n]);
+
+  // 97,400 IQD: 60 from the goods, 411 from everything. The goods are settled and the 30 cents stay owed.
+  const goods = owing("Nearer Goods");
+  postFor(dinars(goods.customer, 97400n, 6200n), goods.today);
+  assert.deepEqual([customerBalance(goods.customer), remaining(goods.today), remaining(goods.older)], [30n, 0n, 30n]);
+
+  // The database picks the same way the app does.
+  assert.equal(app(`select gs_dinar_credit(97700, ${RATE}, 6200, 6230) || ' ' || gs_dinar_credit(97400, ${RATE}, 6200, 6230) || ' ' || gs_dinar_credit(97575, ${RATE}, 6200, 6230);`), "6230 6200 6200");
+  assert.deepEqual([dinarCredit(97700n, RATE, [6200n, 6230n]), dinarCredit(97400n, RATE, [6200n, 6230n]), dinarCredit(97575n, RATE, [6200n, 6230n])], [6230n, 6200n, 6200n]);
+  // Exactly as near to both (97,340 and 97,654 for $62.20: 97,497 is 157 from each): everything.
+  assert.equal(usdCentsToIqd(6220n, RATE), 97654n);
+  assert.equal(app(`select gs_dinar_credit(97497, ${RATE}, 6200, 6220);`), "6220");
+  assert.equal(dinarCredit(97497n, RATE, [6200n, 6220n]), 6220n);
   assert.equal(health(), "");
 });
 

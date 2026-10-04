@@ -91,10 +91,18 @@ test("a dinar payment is worth what it settles, and otherwise exactly what it co
   assert.equal(dinarCredit(91250n, rate, [6200n]), 6200n, "110 dinars over settles it, with no credit left");
   assert.equal(dinarCredit(90000n, rate, [6200n]), 6122n, "a part payment is exact");
   assert.equal(dinarCredit(100000n, rate, [6200n]), 6803n, "an overpayment is exact, and the rest is his credit");
-  // The consignment the money is for is tried first, then everything he owes.
+  // It can settle the consignment the money is for, or everything he owes.
   assert.equal(dinarCredit(91000n, rate, [6200n, 16200n]), 6200n);
   assert.equal(dinarCredit(238000n, rate, [6200n, 16200n]), 16200n);   // $162.00 is 238,140 IQD
   assert.equal(dinarCredit(150000n, rate, [6200n, 16200n]), 10204n);
+  // When the two are less than a step apart, the nearer one is settled: $62.00 is 91,140 IQD and $62.30 is 91,581.
+  assert.equal(dinarCredit(91200n, rate, [6200n, 6230n]), 6200n, "60 from the goods, 381 from everything");
+  assert.equal(dinarCredit(91500n, rate, [6200n, 6230n]), 6230n, "81 from everything, 360 from the goods");
+  assert.equal(dinarCredit(91500n, rate, [6230n, 6200n]), 6230n, "whichever order they are given in");
+  // As near to both: everything is settled. $62.00 is 91,140 and $62.20 is 91,434: 91,287 is 147 from each.
+  assert.equal(usdCentsToIqd(6220n, rate), 91434n);
+  assert.equal(dinarCredit(91287n, rate, [6200n, 6220n]), 6220n);
+  assert.equal(dinarCredit(91287n, rate, [6220n, 6200n]), 6220n);
   assert.equal(dinarCredit(91000n, rate, []), 6190n);
   assert.equal(dinarCredit(91000n, rate, [6200n], 0n), 6190n, "rounding switched off");
 });

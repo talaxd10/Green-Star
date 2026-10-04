@@ -77,7 +77,7 @@ Views: `payments` (every payment with how it was paid, read from the ledger), `p
 
 **Dinar rounding, paying in parts, and the Error entry** (the CEO's rules, October 2026)
 
-- `packages/db/migrations/0011_new_kinds.sql`, `0012_dinar_rounding_and_errors.sql`, `0013_round_payment_parts.sql`.
+- `packages/db/migrations/0011_new_kinds.sql`, `0012_dinar_rounding_and_errors.sql`, `0013_round_payment_parts.sql`, `0014_nearest_amount_settles.sql`.
 - `packages/domain/src/fx.ts` (`roundDinars`, `dinarsSettle`, `dinarCredit`) and `payments.ts` (`planPayment`): the same working-out in the screens, the API and the database.
 
 His words: "Sometimes a customer owes $533. $400 he pays with dollars, $133 with dinars: 133 x 1,570 = 208,810. What I do is $400 + 209,000 IQD = $533." "You can just do a normal rounding." "There are customers who pay by all three: dollars, dinars and FIB." "If there becomes a $5 error or something, I will just do a data entry and call it Error."
@@ -85,7 +85,7 @@ His words: "Sometimes a customer owes $533. $400 he pays with dollars, $133 with
 What the database enforces:
 
 1. Dinars handed over still pass through the books at exactly what they convert to at the day's rate. Nothing about the conversion changed.
-2. A dinar payment that comes to what is owed, give or take half the rounding step, settles it exactly. The step is 1,000 dinars (so 500 either way) and is in Settings; 0 switches rounding off. "What is owed" is the consignment the payment is for, or everything the customer owes. A part payment, an overpayment and a payment in dollars are never rounded.
+2. A dinar payment that comes to what is owed, give or take half the rounding step, settles it exactly. The step is 1,000 dinars (so 500 either way) and is in Settings; 0 switches rounding off. "What is owed" is the consignment the payment is for, or everything the customer owes; when the dinars come to both (the two are less than a step apart), the nearer one. A part payment, an overpayment and a payment in dollars are never rounded.
 3. The difference is a line on the `Dinar rounding` account in the same entry, so the books say what rounding gave and took. No entry can carry a rounding line larger than half a step, or one that does not settle what was owed, whatever the application sends.
 4. One visit, or one stop on a round, can be paid in up to four parts: dollars and dinars, cash and a wallet. Each part is its own entry, one amount in one currency. Dollars are applied first, then dinars in the order given, so it is the dinars that settle what is left. All parts are saved or none is.
 5. On a round the driver's dollars and dinars each go to the round's cash in that currency, and a wallet part goes to the wallet. Taking the result back, or entering the stop again, reverses every part. A part is never edited or deleted, and cannot be reversed by hand from the ledger.
@@ -292,8 +292,9 @@ What the screens enforce:
 7. A session that ended while a screen was open sends him back to sign in, and then back to where he was.
 8. No screen adds an account or changes one. Settings lists the devices he is signed in on, and signs out one he no longer uses.
 9. Before Save, a payment shows what each part will be worth on his account, what is left, and for dinars the amount to ask for: "What is left is 192,850 IQD. Use 193,000." It is worked out by the same function the API posts with.
+10. A stop that came up short by no more than the Error limit links straight to the Error entry, with the customer and the amount filled in. Money shows what rounding has given or taken and what was let go as errors, in all.
 
-`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry up to the limit and past it once the limit is raised, a stop on a round paid to the driver in two currencies and counted in, and, signed out, every screen and address refusing to open.
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry up to the limit and past it once the limit is raised, a stop on a round paid to the driver in two currencies and counted in, a stop 62 cents short let go from the round with one click, and, signed out, every screen and address refusing to open.
 
 ## Run it
 

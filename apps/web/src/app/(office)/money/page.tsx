@@ -1,12 +1,12 @@
 "use client";
 
-import type { CashOut, CashOutCategory, Currency, CustomerDetail, CustomerSummary, ErrorEntry, OfficeMethod, Page, Payment, PaymentParts, Rate, Settings } from "@green-star/contracts";
+import type { Account, CashOut, CashOutCategory, Currency, CustomerDetail, CustomerSummary, ErrorEntry, OfficeMethod, Page, Payment, PaymentParts, Rate, Settings } from "@green-star/contracts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { CustomerPicker } from "@/components/customer-picker";
 import { useToast } from "@/components/toast";
-import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, Segmented, Select, Table, Td, Textarea, Th } from "@/components/ui";
+import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, Segmented, Select, Stat, Table, Td, Textarea, Th } from "@/components/ui";
 import { WalletsCard } from "@/components/wallets";
 import { api } from "@/lib/api";
 import { useGet, useRateToday, useSave } from "@/lib/hooks";
@@ -305,11 +305,12 @@ function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
 }
 
 /** The CEO's "Error" entry: a small amount off what a customer owes, with no money arriving. */
-function ErrorForm({ initial }: { initial: CustomerSummary | null }) {
+function ErrorForm({ initial, initialCents }: { initial: CustomerSummary | null; initialCents: number | null }) {
   const toast = useToast();
   const settings = useGet<Settings>("/v1/settings");
   const [customer, setCustomer] = useState<CustomerSummary | null>(initial);
-  const [amount, setAmount] = useState("");
+  // Opened from a stop that came up a little short: the amount is already filled in.
+  const [amount, setAmount] = useState(initialCents === null ? "" : amountForInput(initialCents, "USD"));
   const [note, setNote] = useState("");
 
   useEffect(() => setCustomer(initial), [initial]);
@@ -509,6 +510,29 @@ function Reverse({ entryId, what, onClose }: { entryId: string; what: string; on
   );
 }
 
+/** What rounding dinars has given or taken, and what was let go as errors: the two accounts nobody was paid or charged for. */
+function SmallDifferences() {
+  const accounts = useGet<{ items: Account[] }>("/v1/accounts");
+  if (accounts.data === undefined) return null;
+  const on = (code: string) => accounts.data.items.find((account) => account.code === code)?.balance ?? 0;
+  // The rounding account goes down when a customer's dinars were worth more than he was credited.
+  const rounding = -on("dinar_rounding_usd");
+  const errors = on("errors_usd");
+  return (
+    <Card>
+      <CardHead title="Small differences" hint="Money nobody was paid or charged: the cents rounding dinars gave or took, and what was let go as errors." />
+      <div className="grid grid-cols-2 gap-6 p-5">
+        <Stat label="Dinar rounding" hint={rounding === 0 ? "Even so far" : rounding > 0 ? "Rounding gave this, in all" : "Rounding took this, in all"} tone={rounding < 0 ? "amber" : undefined}>
+          {formatMoney(Math.abs(rounding), "USD")}
+        </Stat>
+        <Stat label="Errors" hint="Taken off customers' accounts, in all" tone={errors > 0 ? "amber" : undefined}>
+          {formatMoney(errors, "USD")}
+        </Stat>
+      </div>
+    </Card>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 type Tab = "payment" | "cash_out" | "exchange" | "error";
@@ -520,9 +544,12 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 function MoneyScreen() {
-  const customerId = useSearchParams().get("customer");
+  const search = useSearchParams();
+  const customerId = search.get("customer");
+  // /money?customer=…&error=44 opens the Error tab with 44 cents filled in.
+  const errorCents = /^[1-9]\d{0,5}$/.test(search.get("error") ?? "") ? Number(search.get("error")) : null;
   const preset = useGet<CustomerDetail>(customerId === null ? null : `/v1/customers/${customerId}`);
-  const [tab, setTab] = useState<Tab>("payment");
+  const [tab, setTab] = useState<Tab>(errorCents === null ? "payment" : "error");
   const [reversing, setReversing] = useState<{ entryId: string; what: string } | null>(null);
   const payments = useGet<Page<Payment>>("/v1/payments?limit=12");
   const cashOuts = useGet<Page<CashOut>>("/v1/cash-outs?limit=8");
@@ -538,7 +565,7 @@ function MoneyScreen() {
             <div className="border-b border-rule px-5 py-3.5">
               <Segmented label="What is being entered" value={tab} onChange={setTab} options={TABS} />
             </div>
-            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} />}
+            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} initialCents={errorCents} />}
           </Card>
           <WalletsCard />
         </div>
@@ -679,6 +706,8 @@ function MoneyScreen() {
               </Table>
             </Card>
           ) : null}
+
+          <SmallDifferences />
         </div>
       </div>
       {reversing ? <Reverse entryId={reversing.entryId} what={reversing.what} onClose={() => setReversing(null)} /> : null}

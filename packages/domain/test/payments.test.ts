@@ -47,6 +47,12 @@ test("money for one consignment settles that one first, then everything he owes"
   const mixed = planPayment([iqd(50000n), usd(3000n)], { ratePer100: RATE, owedUsdCents: 16200n, owedForConsignmentUsdCents: 6200n });  // $32.00 is 50,240
   assert.equal(brief(mixed), "1:USD:3000 0:IQD:3200");
   assert.equal(mixed.leftUsdCents, 10000n);
+  // $62.00 on today's goods and 30 cents from before: 90,300 dinars ($62.28 at 1,450) is nearer to everything, and settles everything.
+  const both = planPayment([iqd(90300n)], { ratePer100: 145000, owedUsdCents: 6230n, owedForConsignmentUsdCents: 6200n });
+  assert.deepEqual([both.creditUsdCents, both.leftUsdCents], [6230n, 0n]);
+  // 89,950 is nearer to the goods alone (89,900) than to everything (90,335): the 30 cents stay owed.
+  const goods = planPayment([iqd(89950n)], { ratePer100: 145000, owedUsdCents: 6230n, owedForConsignmentUsdCents: 6200n });
+  assert.deepEqual([goods.creditUsdCents, goods.leftUsdCents], [6200n, 30n]);
   // Dollars that more than pay the consignment leave nothing of it to settle; the dinars are then measured against everything.
   const beyond = planPayment([usd(7000n), iqd(144000n)], { ratePer100: RATE, owedUsdCents: 16200n, owedForConsignmentUsdCents: 6200n });  // $92.00 is 144,440
   assert.deepEqual([beyond.creditUsdCents, beyond.leftUsdCents], [16200n, 0n]);

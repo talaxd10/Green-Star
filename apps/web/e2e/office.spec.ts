@@ -533,6 +533,36 @@ test("at the door a customer pays the driver in dollars and dinars, and the driv
   await expect(page.getByText("Counted in: $400.00 · 193,000 IQD")).toBeVisible();
 });
 
+test("a stop that came up a little short is let go from the round with one click", async () => {
+  const { consignmentId } = await owing("Short Payer", 6_200, "GSSK7004");
+  const driver = await send("POST", "/v1/drivers", { name: "Hawre" });
+  const round = await send<{ id: string }>("POST", "/v1/rounds", { driverId: driver.id, stops: [{ consignmentId }] });
+  await send("POST", `/v1/rounds/${round.id}/depart`);
+
+  // $62.00 is 89,900 dinars. He gave the driver 89,000: more than 500 short, so it is not rounded away.
+  await page.goto(`/rounds/${round.id}`);
+  await page.getByLabel("Outcome for Short Payer").selectOption("paid");
+  await page.getByLabel("Amount received from Short Payer").fill("89,000");
+  await page.getByRole("row", { name: /Short Payer/ }).getByLabel("Currency").selectOption("IQD");
+  await expect(page.getByText("89,000 IQD → about $61.38 at today's 1,450")).toBeVisible();
+  await page.getByRole("button", { name: "Save the results" }).click();
+  await expect(page.getByText("The driver forgot to collect.")).toBeVisible();
+
+  await page.getByRole("link", { name: "$0.62 short: enter as Error" }).click();
+  await expect(page).toHaveURL(/\/money\?customer=.*&error=62$/);
+  await expect(page.getByRole("radio", { name: "Error" })).toBeChecked();
+  await expect(page.getByText("He owes $0.62.")).toBeVisible();
+  await expect(page.getByLabel("Amount to take off, in dollars")).toHaveValue("0.62");
+  await page.getByRole("button", { name: "Enter the error" }).click();
+  await expect(page.getByText("$0.62 taken off Short Payer's account")).toBeVisible();
+
+  // He owes nothing now, so nobody forgot to collect.
+  await page.goto(`/rounds/${round.id}`);
+  await expect(page.getByLabel("Amount received from Short Payer")).toHaveValue("89000");
+  await expect(page.getByText("The driver forgot to collect.")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /short: enter as Error/ })).toHaveCount(0);
+});
+
 test("signed out, nothing opens: every screen asks him to sign in, and the API answers nobody", async () => {
   // The office screen is gone, whoever asks for it.
   await page.goto("/monitor");

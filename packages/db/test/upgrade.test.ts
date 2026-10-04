@@ -45,8 +45,30 @@ test("an office that had an owner and an office screen: both are switched off an
   appAs(ceo)(`select gs_set_rate('2026-01-01', 145000, ${lit(ceo)}, true);`);
   refused(() => appAs(owner)("insert into customers (display_name) values ('By the owner');"), /ceo_only/);
 
+  // And the office has money on the books from before: a file, a round, a customer who paid the driver
+  // 89,000 dinars for $62.00 (89,900 at 1,450). Before the rounding rule that was $61.38, and 62 cents were left owed.
+  const customer = "44444444-4444-4444-8444-444444444444";
+  const shipment = "55555555-5555-4555-8555-555555555555";
+  const consignment = "66666666-6666-4666-8666-666666666666";
+  const driver = "77777777-7777-4777-8777-777777777777";
+  const round = "88888888-8888-4888-8888-888888888888";
+  const oldResult = "99999999-aaaa-4aaa-8aaa-999999999999";
+  appAs(ceo)(`
+    insert into customers (id, display_name) values (${lit(customer)}, 'From before');
+    insert into shipments (id, code) values (${lit(shipment)}, 'GSSK-BEFORE');
+    insert into consignments (id, shipment_id, customer_id, amount_due_usd_cents) values (${lit(consignment)}, ${lit(shipment)}, ${lit(customer)}, 6200);
+    select gs_confirm_shipment(${lit(shipment)}, ${lit(ceo)}, '2026-01-01T05:00:00Z');
+    insert into drivers (id, name) values (${lit(driver)}, 'Karwan');
+    insert into rounds (id, driver_id, created_by) values (${lit(round)}, ${lit(driver)}, ${lit(ceo)});
+    select gs_add_round_stop(${lit(round)}, ${lit(consignment)}, ${lit(ceo)});
+    select gs_round_depart(${lit(round)}, ${lit(ceo)}, '2026-01-01T06:00:00Z');
+    select gs_enter_round_result(${lit(oldResult)}, ${lit(round)}, ${lit(consignment)}, 'paid', ${lit(ceo)}, '2026-01-01T09:00:00Z', 89000, 'IQD', 'driver_cash');`);
+  const owes = () => sql(`select balance_usd_cents from customer_balances where customer_id = ${lit(customer)};`);
+  assert.equal(owes(), "62");
+
   const ran = migrate(url);
   assert.equal(ran[0], "0010_only_the_ceo.sql");
+  assert.ok(ran.includes("0013_round_payment_parts.sql"));
 
   const accounts = sql("select role || ':' || active || ':' || (select count(*) from sessions s where s.user_id = u.id and s.revoked_at is null) from users u order by role;");
   assert.equal(accounts, "ceo:true:2\nowner:false:0\nmonitor:false:0");
@@ -75,9 +97,39 @@ test("an office that had an owner and an office screen: both are switched off an
   assert.equal(sql("select u.name from fx_rates r join users u on u.id = r.set_by where r.day = '2026-01-01';"), "Sarkar");
   appAs(ceo)(`select gs_set_rate('2026-01-02', 146000, ${lit(ceo)}, true);`);
   appAs(ceo)("insert into customers (display_name) values ('After');");
-  assert.equal(sql("select count(*) from customers;"), "1");
+  assert.equal(sql("select count(*) from customers where display_name = 'After';"), "1");
   sql("insert into users (name, phone) values ('Second CEO', '+9647700000003');");
   assert.equal(sql("select role from users where name = 'Second CEO';"), "ceo");
+
+  // The money from before is as it was: nothing already on the books is rounded after the fact.
+  assert.equal(owes(), "62");
+  assert.equal(sql(`select credited_usd_cents from round_results where id = ${lit(oldResult)};`), "6138");
+  // The old result reads as a result with one payment, and the new settings and accounts are there.
+  assert.equal(
+    sql(`select jsonb_array_length(payments) || '|' || (payments -> 0 ->> 'received_amount') || '|' || (payments -> 0 ->> 'credited_usd_cents') from round_stop_details where consignment_id = ${lit(consignment)};`),
+    "1|89000|6138",
+  );
+  assert.equal(sql("select count(*) from round_payment_entries;"), "1");
+  assert.equal(sql("select dinar_rounding_iqd || '|' || error_max_usd_cents from settings;"), "1000|500");
+  assert.equal(sql("select string_agg(code || ':' || balance, ' ' order by code) from account_overview where kind = 'adjustment';"), "dinar_rounding_usd:0 errors_usd:0");
+
+  // The 62 cents from before can be let go with an Error entry, and that can be taken back.
+  const error = appAs(ceo)(`select gs_post_entry('error_correction', '2026-01-01T10:00:00Z', ${lit(ceo)}, 'upgrade-error', jsonb_build_array(
+    jsonb_build_object('account_id', gs_account('errors_usd'), 'currency', 'USD', 'amount', 62),
+    jsonb_build_object('account_id', gs_customer_account(${lit(customer)}), 'currency', 'USD', 'amount', -62)));`);
+  assert.equal(owes(), "0");
+  assert.equal(sql(`select status from consignments where id = ${lit(consignment)};`), "delivered_paid");
+  appAs(ceo)(`select gs_reverse_entry(${lit(error)}, ${lit(ceo)}, 'entered again the new way', 'upgrade-error-back', '2026-01-01T10:30:00Z');`);
+  assert.equal(owes(), "62");
+
+  // The stop is entered again the new way: $50 and 17,000 dinars for the other $12.00 (17,400 exactly).
+  appAs(ceo)(`select gs_enter_round_result(gen_random_uuid(), ${lit(round)}, ${lit(consignment)}, 'paid', ${lit(ceo)}, '2026-01-01T09:00:00Z', 5000, 'USD', 'driver_cash', null,
+                 '[{"amount": 17000, "currency": "IQD", "method": "driver_cash"}]'::jsonb);`);
+  assert.equal(owes(), "0");
+  assert.equal(sql(`select voided_at is not null from round_results where id = ${lit(oldResult)};`), "t");
+  assert.equal(sql("select string_agg(part_no || ':' || credited_usd_cents || ':' || voided, ' ' order by voided desc, part_no) from round_payment_entries;"), "1:6138:true 1:5000:false 2:1200:false");
+  assert.equal(sql("select balance from account_overview where code = 'dinar_rounding_usd';"), "28");
+  assert.equal(sql(`select string_agg(currency || ':' || collected, ' ' order by currency) from round_cash where round_id = ${lit(round)};`), "USD:5000 IQD:17000");
 
   // What the office screen showed went with it.
   refused(() => sql("select monitor_widgets from settings;"), /does not exist/);

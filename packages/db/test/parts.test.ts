@@ -148,13 +148,33 @@ test("a trusted customer who pays off everything at the door in dinars owes noth
   assert.equal(health(), "");
 });
 
+test("the dinars settle what is left of these goods after the dollars, even when he owes more from before", () => {
+  // A trusted customer with $100.00 on an older file. Today's goods are $533.00: he pays $400 and 209,000 IQD at the door.
+  const customer = newCustomer("Owes From Before");
+  makeTrusted(customer);
+  const older = charge(customer, 10000n, day(3)).consignmentId;
+  const today = charge(customer, 53300n, day(4)).consignmentId;
+  const round = roundOut([today], LEFT);
+  enterResult({
+    roundId: round, consignmentId: today, outcome: "paid", at: DOOR,
+    received: { amount: 40000, currency: "USD" },
+    more: [{ amount: 209000, currency: "IQD" }],
+  });
+  // The dinars are measured against the $133.00 left on today's goods, not the $533.00 they started at
+  // and not the $233.00 he owes in all: today's goods are paid, to the cent, and the old file is untouched.
+  assert.equal(parts(round, today), "driver_cash:40000:USD:40000 driver_cash:209000:IQD:13300");
+  assert.deepEqual([customerBalance(customer), remaining(today), remaining(older)], [10000n, 0n, 10000n]);
+  assert.equal(health(), "");
+});
+
 test("what is typed for the other payments is checked like the first", () => {
   const { customer, consignmentId, round } = atTheDoor("Refused Parts", 53300n);
   const first = { amount: 40000, currency: "USD" as const };
   const tryMore = (more: readonly { amount: number; currency: string; method?: string }[], received: typeof first | null = first) =>
     enterResult({ roundId: round, consignmentId, outcome: "paid", at: DOOR, ...(received === null ? {} : { received }), more });
 
-  refused(() => tryMore([{ amount: 0, currency: "IQD" }]), /amount_invalid/);
+  refused(() => tryMore([{ amount: 0, currency: "IQD" }]), /amount_invalid: the amount received must be more than zero/);
+  refused(() => tryMore([{ amount: 0, currency: "USD", method: "fib" }]), /amount_invalid: the amount received must be more than zero/);
   refused(() => tryMore([{ amount: -5, currency: "IQD" }]), /amount_invalid/);
   refused(() => tryMore([{ amount: 1.5, currency: "IQD" }]), /amount_invalid/);
   refused(() => tryMore([{ amount: 1000, currency: "EUR" }]), /payment_invalid: money is taken in dollars or dinars/);

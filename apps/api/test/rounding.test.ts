@@ -127,6 +127,22 @@ test("dinars paid for one consignment settle that one; paid for nothing in parti
   const both = await s.send("POST", "/v1/payments/parts", { customerId: a, parts: [cash(usd(2_000)), { received: iqd(43_500), method: "zaincash" }] });
   assert.equal(brief(both.body.payments), "office_cash:2000:USD:2000 zaincash:43500:IQD:3000");
   assert.equal(await s.balance(a), 0);
+
+  // 30 cents left from an older file and $62.00 on the new one: 90,300 dinars ($62.28) is nearer to
+  // everything he owes (90,335) than to the new file alone (89,900), so it settles everything.
+  const b = await s.customer();
+  await s.file([[b, 30]]);
+  const latest = await s.file([[b, 6_200]]);
+  const all = await s.send("POST", "/v1/payments", { customerId: b, received: iqd(90_300), method: "office_cash", forConsignmentId: latest.by[b] });
+  assert.equal(all.body.creditedUsdCents, 6_230);
+  assert.equal(await s.balance(b), 0);
+  // 89,950 is nearer to the new file alone: that is settled, and the 30 cents stay owed.
+  const c = await s.customer();
+  await s.file([[c, 30]]);
+  const newer = await s.file([[c, 6_200]]);
+  const one = await s.send("POST", "/v1/payments", { customerId: c, received: iqd(89_950), method: "office_cash", forConsignmentId: newer.by[c] });
+  assert.equal(one.body.creditedUsdCents, 6_200);
+  assert.equal(await s.balance(c), 30);
   await s.sound();
 });
 

@@ -74,16 +74,22 @@ export function dinarsSettle(dinars: bigint, ratePer100: number, owedUsdCents: b
 }
 
 /**
- * What a dinar payment is worth on the customer's account. Each amount owed
- * is tried in turn (the consignment the money is for, then everything he
- * owes): the first one the dinars settle is what he is credited. Otherwise
- * the dinars are worth exactly what they convert to.
+ * What a dinar payment is worth on the customer's account. The amounts owed
+ * are the ones it could settle: the consignment the money is for, and
+ * everything he owes. It is worth the one it settles; when it settles both
+ * (they are less than a step apart), the nearer one, and everything when
+ * they are as near. Otherwise the dinars are worth exactly what they convert
+ * to. The database works it out the same way (gs_dinar_credit).
  */
 export function dinarCredit(dinars: bigint, ratePer100: number, owedUsdCents: readonly bigint[], stepIqd: bigint = DINAR_ROUNDING_IQD): bigint {
+  let best: { owed: bigint; off: bigint } | null = null;
   for (const owed of owedUsdCents) {
-    if (dinarsSettle(dinars, ratePer100, owed, stepIqd)) return owed;
+    if (!dinarsSettle(dinars, ratePer100, owed, stepIqd)) continue;
+    const exactly = usdCentsToIqd(owed, ratePer100);
+    const off = dinars > exactly ? dinars - exactly : exactly - dinars;
+    if (best === null || off < best.off || (off === best.off && owed > best.owed)) best = { owed, off };
   }
-  return iqdToUsdCents(dinars, ratePer100);
+  return best === null ? iqdToUsdCents(dinars, ratePer100) : best.owed;
 }
 
 /** The nearest whole rate for an exchange where both amounts are known. */
