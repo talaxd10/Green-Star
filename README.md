@@ -21,7 +21,7 @@ What the database enforces, whatever the application does:
 6. An idempotency key posts once, even when the same request arrives eight times at once.
 7. A customer payment in dinars converts at that Baghdad day's rate, to the cent.
 
-There is no discount entry kind and no account for one. The one way an amount comes off a customer's account without money arriving is the CEO's Error entry, small and capped (see Dinar rounding and the Error entry below).
+There is no discount entry kind and no account for one. The one way an amount comes off a customer's account without money arriving is the CEO's Error entry (see Dinar rounding and the Error entry below).
 
 **Customers and files** (build order step 3)
 
@@ -65,7 +65,7 @@ Views for the screens and the checks: `round_overview`, `round_stop_details`, `r
 
 What the database enforces:
 
-1. Each kind of entry moves only the accounts it is meant to, in the direction it is meant to (the table `entry_shapes`). A customer's account goes down only against money that really arrived (cash, a wallet or a driver's round) or by an Error entry inside its limit. That is what "no discounts" means in the ledger.
+1. Each kind of entry moves only the accounts it is meant to, in the direction it is meant to (the table `entry_shapes`). A customer's account goes down only against money that really arrived (cash, a wallet or a driver's round) or by the CEO's Error entry. That is what "no discounts" means in the ledger.
 2. One payment is one customer and one amount in one currency.
 3. The day's rate is set through `gs_set_rate`, which logs every change. A rate more than 20% from the last one has to be sent again to confirm: 1,450 typed instead of 145,000 is caught.
 4. The vault is closed by counting it note by note. A gap needs a note. Expected cash is the last count plus everything entered since.
@@ -77,10 +77,10 @@ Views: `payments` (every payment with how it was paid, read from the ledger), `p
 
 **Dinar rounding, paying in parts, and the Error entry** (the CEO's rules, October 2026)
 
-- `packages/db/migrations/0011_new_kinds.sql`, `0012_dinar_rounding_and_errors.sql`, `0013_round_payment_parts.sql`, `0014_nearest_amount_settles.sql`.
+- `packages/db/migrations/0011_new_kinds.sql`, `0012_dinar_rounding_and_errors.sql`, `0013_round_payment_parts.sql`, `0014_nearest_amount_settles.sql`, `0015_error_both_ways.sql`.
 - `packages/domain/src/fx.ts` (`roundDinars`, `dinarsSettle`, `dinarCredit`) and `payments.ts` (`planPayment`): the same working-out in the screens, the API and the database.
 
-His words: "Sometimes a customer owes $533. $400 he pays with dollars, $133 with dinars: 133 x 1,570 = 208,810. What I do is $400 + 209,000 IQD = $533." "You can just do a normal rounding." "There are customers who pay by all three: dollars, dinars and FIB." "If there becomes a $5 error or something, I will just do a data entry and call it Error."
+His words: "Sometimes a customer owes $533. $400 he pays with dollars, $133 with dinars: 133 x 1,570 = 208,810. What I do is $400 + 209,000 IQD = $533." "You can just do a normal rounding." "There are customers who pay by all three: dollars, dinars and FIB." "If there becomes a $5 error or something, I will just do a data entry and call it Error." Then, in October: "Normal rounding means from 500 IQD upwards it becomes 1,000." "The Error entry is for both, and no limit. This is just to make San's job easier."
 
 What the database enforces:
 
@@ -89,10 +89,12 @@ What the database enforces:
 3. The difference is a line on the `Dinar rounding` account in the same entry, so the books say what rounding gave and took. No entry can carry a rounding line larger than half a step, or one that does not settle what was owed, whatever the application sends.
 4. One visit, or one stop on a round, can be paid in up to four parts: dollars and dinars, cash and a wallet. Each part is its own entry, one amount in one currency. Dollars are applied first, then dinars in the order given, so it is the dinars that settle what is left. All parts are saved or none is.
 5. On a round the driver's dollars and dinars each go to the round's cash in that currency, and a wallet part goes to the wallet. Taking the result back, or entering the stop again, reverses every part. A part is never edited or deleted, and cannot be reversed by hand from the ledger.
-6. An Error entry takes an amount off what one customer owes and puts it on the `Errors` account. It is never more than the limit in Settings ($5; 0 switches it off), never more than he owes, it only ever takes off, and it is for one customer. It pays his oldest unpaid file the way a payment does, shows as its own line on his statement, and is reversed like any other entry.
-7. Both settings are in the one settings row: changed only by the CEO, every change in the audit log.
+6. An Error entry takes an amount off what one customer owes, or adds an amount to it, against the `Errors` account. There is no limit. Taking off is never more than he owes: credit is money that came in, and an Error is not money. It pays his oldest unpaid file the way a payment does (or the consignment it names first).
+7. An Error that adds goes onto one of his consignments, so everything a customer owes still belongs to a file. That consignment is owed more, payments pay it the usual way, and it is not cancelled on its own while the Error stands (correcting its amount carries the Error over).
+8. An Error entry shows as its own line on his statement and is reversed like any other entry. When one that added was already paid, the money that paid it is given back (`allocation_releases`, an allocation is never edited) and applied again: to his oldest unpaid file, or it stays as credit.
+9. The rounding step is in the one settings row: changed only by the CEO, every change in the audit log.
 
-The two accounts (`dinar_rounding_usd`, `errors_usd`) are on `/v1/accounts` with everything else. `dinar_rounding` and `error_entries` are the views behind the screens.
+The two accounts (`dinar_rounding_usd`, `errors_usd`) are on `/v1/accounts` with everything else. `dinar_rounding` and `error_entries` are the views behind the screens. `consignment_details.errors_added_usd_cents` shows what Errors added to a consignment.
 
 **Sign-in and the API** (build order step 1)
 
@@ -190,7 +192,7 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | PUT | `/v1/fx-rates/:day` | Set a day's dinar rate (`today` or a date) |
 | GET, POST | `/v1/payments` | Payments with how each was paid; an office or wallet payment |
 | POST | `/v1/payments/parts` | One visit paid in two to four ways: dollars and dinars, cash and a wallet. All saved or none |
-| GET, POST | `/v1/errors` | The CEO's Error entries; a small amount off what a customer owes |
+| GET, POST | `/v1/errors` | The CEO's Error entries; an amount off what a customer owes, or onto one of his consignments (`add`, `consignmentId`) |
 | GET, POST | `/v1/cash-outs` | Cash out of the vault: China, driver pay, fuel and car, customs and airport, rent and salaries, other |
 | POST | `/v1/exchanges` | Dinars changed into dollars, or back |
 | GET | `/v1/vault` | What should be in the box, the notes, the last closes |
@@ -212,7 +214,7 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | GET | `/v1/reports/today` | Today's rounds: to collect, collected, counted in, per currency. Files in progress |
 | GET | `/v1/wallets` | Each wallet: the books, what its app should show, the last checks |
 | POST | `/v1/wallets/checks` | What the wallet's app shows, typed in and compared |
-| GET, PUT | `/v1/settings` | Held-in-car days, vault closing time, wallet check days, the dinar rounding step, the Error limit |
+| GET, PUT | `/v1/settings` | Held-in-car days, vault closing time, wallet check days, the dinar rounding step |
 | GET | `/healthz` | For the host's uptime check. 503 when the database is down or the checks failed after the latest save |
 
 The shape of every request and reply is in `packages/contracts`.
@@ -292,9 +294,9 @@ What the screens enforce:
 7. A session that ended while a screen was open sends him back to sign in, and then back to where he was.
 8. No screen adds an account or changes one. Settings lists the devices he is signed in on, and signs out one he no longer uses.
 9. Before Save, a payment shows what each part will be worth on his account, what is left, and for dinars the amount to ask for: "What is left is 192,850 IQD. Use 193,000." It is worked out by the same function the API posts with.
-10. A stop that came up short by no more than the Error limit links straight to the Error entry, with the customer and the amount filled in. Money shows what rounding has given or taken and what was let go as errors, in all.
+10. A stop where he paid but came up short links straight to the Error entry, with the customer, the amount and the goods filled in. Money shows what rounding has given or taken and what was let go or added as errors, in all.
 
-`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry up to the limit and past it once the limit is raised, a stop on a round paid to the driver in two currencies and counted in, a stop 62 cents short let go from the round with one click, and, signed out, every screen and address refusing to open.
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry taken off and another added to his file, a stop on a round paid to the driver in two currencies and counted in, a stop 62 cents short let go from the round with one click, and, signed out, every screen and address refusing to open.
 
 ## Run it
 
@@ -427,17 +429,17 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 - **Overpayment becomes credit.** "Customer owes $600, pays $1,000: $400 becomes credit, then later he can order and pay with that $400." It pays toward his next file by itself.
 - **The rate that counts is the rate of the day the customer pays,** not the day the cargo arrived. "The day cargo arrives $100 = 152,000; the day the customer pays $100 = 155,000: this is counted."
-- **Dinar rounding is normal rounding,** and the rounded dinars settle the dollars owed. $62.00 at 1,470 is 91,140 IQD: 91,000 pays it, and nothing is left owed.
+- **Dinar rounding is normal rounding to the nearest 1,000,** and the rounded dinars settle the dollars owed. "From 500 IQD upwards it becomes 1,000." $62.00 at 1,470 is 91,140 IQD: 91,000 pays it, and nothing is left owed.
+- **The Error entry goes both ways and has no limit.** "This is just to make San's job easier."
 - **Customers pay in dollars, dinars and FIB at once.** Dinars and FIB dinars are divided by the day's rate.
 - **A small error is fixed with an entry called Error.**
 - **The system is his alone.** One kind of account.
 
 ## Assumed, to confirm with the CEO
 
-- **"Normal rounding" is to the nearest 1,000 dinars.** His one example (208,810 becomes 209,000) fits 500 and 1,000. It is a setting.
 - **A rounded payment has to come within half a step of what is owed to settle it.** 208,810 owed: 208,500 and 209,000 settle it, 208,000 does not and leaves 52 cents owed. If he also takes "a bit less, let it go", that is what the Error entry is for.
-- **An Error entry only takes off.** It cannot make a customer owe more, because everything a customer owes belongs to a file. Money typed for too much is fixed the way every money mistake is: reversed and entered again.
-- **An Error entry is at most $5.00,** from "a $5 error or something". The limit is a setting, up to $100.
+- **An Error entry that adds goes onto one of his consignments,** his newest unless another is picked, because everything a customer owes belongs to a file.
+- **An Error entry never takes off more than he owes.** "No limit" is read as no dollar cap; it does not make credit out of nothing.
 - **One visit is at most four payments,** and two payments in the same currency and the same way are added up into one.
 
 - Wallet accounts (FIB, FastPay, ZainCash) exist in both dollars and dinars, because the board doesn't say which currency wallet payments arrive in.

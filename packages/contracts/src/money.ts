@@ -90,16 +90,25 @@ export const NewPaymentPartsRequest = z.strictObject({
 export type NewPaymentPartsRequest = z.infer<typeof NewPaymentPartsRequest>;
 
 /**
- * POST /v1/errors. The CEO's "Error" entry: a small amount taken off what a
- * customer owes, with no money arriving. At most the limit in Settings, and
- * never more than he owes.
+ * POST /v1/errors. The CEO's "Error" entry: an amount taken off what a
+ * customer owes, or added to it, with no money moving. No limit. Taking off
+ * never goes below nothing. Adding goes onto one of his consignments
+ * (`consignmentId`); taking off pays that one first when it is given.
  */
-export const NewErrorRequest = z.strictObject({
-  customerId: Uuid,
-  amountUsdCents: z.number().int("An amount is a whole number of cents").positive("Enter an amount").max(1_000_000),
-  happenedAt: Instant.optional(),
-  note: Note.optional(),
-});
+export const NewErrorRequest = z
+  .strictObject({
+    customerId: Uuid,
+    amountUsdCents: z.number().int("An amount is a whole number of cents").positive("Enter an amount").max(100_000_000),
+    /** true adds to what he owes; false or left out takes off. */
+    add: z.boolean().optional(),
+    consignmentId: Uuid.optional(),
+    happenedAt: Instant.optional(),
+    note: Note.optional(),
+  })
+  .refine((body) => body.add !== true || body.consignmentId !== undefined, {
+    message: "Pick the consignment it adds to",
+    path: ["consignmentId"],
+  });
 export type NewErrorRequest = z.infer<typeof NewErrorRequest>;
 
 export const ErrorQuery = PageQuery.extend({ customerId: Uuid.optional() });
@@ -194,12 +203,17 @@ export interface PaymentParts {
   payments: Payment[];
 }
 
-/** An Error entry: what was taken off a customer's account with no money arriving. */
+/** An Error entry: what was taken off a customer's account, or added to it, with no money moving. */
 export interface ErrorEntry {
   entryId: string;
   customerId: string;
   customerName: string;
+  /** Always positive. `added` says which way. */
   amountUsdCents: number;
+  /** true when it added to what he owes. */
+  added: boolean;
+  /** The consignment it went onto, or paid first. */
+  consignmentId: string | null;
   happenedAt: string;
   createdAt: string;
   note: string | null;

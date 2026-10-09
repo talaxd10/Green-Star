@@ -98,7 +98,6 @@ const RULES: Record<string, string> = {
   settings_held_days: "Held-in-car days is between 1 and 60",
   settings_wallet_days: "Wallet check days is between 1 and 60",
   settings_dinar_rounding: "The dinar rounding step is between 0 and 10,000 dinars",
-  settings_error_max: "The Error limit is between $0 and $100",
 };
 
 /**

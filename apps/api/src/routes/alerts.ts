@@ -6,7 +6,7 @@
 //   GET  /v1/reports/today       Expected vs collected vs counted, per currency
 //   GET  /v1/wallets             Each wallet: the books, what its app should show, the last checks
 //   POST /v1/wallets/checks      What the wallet's app shows, typed in and compared
-//   GET  /v1/settings            Held-in-car days, close time, wallet days, the dinar rounding step, the Error limit
+//   GET  /v1/settings            Held-in-car days, close time, wallet days, the dinar rounding step
 //   PUT  /v1/settings            Change them
 //
 // The alerts themselves are not made here. After every save the API asks the
@@ -139,7 +139,7 @@ async function wallets(q: Queryable): Promise<Wallets> {
 
 async function settings(q: Queryable): Promise<Settings> {
   const row = await q.first(
-    `select held_in_car_days, to_char(vault_close_time, 'HH24:MI') as vault_close_time, wallet_check_days, dinar_rounding_iqd, error_max_usd_cents, updated_at
+    `select held_in_car_days, to_char(vault_close_time, 'HH24:MI') as vault_close_time, wallet_check_days, dinar_rounding_iqd, updated_at
      from settings`,
   );
   return camel<Settings>(row as Row);
@@ -210,9 +210,8 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
                 vault_close_time = coalesce($2::time, vault_close_time),
                 wallet_check_days = coalesce($3::integer, wallet_check_days),
                 dinar_rounding_iqd = coalesce($4::integer, dinar_rounding_iqd),
-                error_max_usd_cents = coalesce($5::integer, error_max_usd_cents),
                 updated_at = now()`,
-        [body.heldInCarDays ?? null, body.vaultCloseTime ?? null, body.walletCheckDays ?? null, body.dinarRoundingIqd ?? null, body.errorMaxUsdCents ?? null],
+        [body.heldInCarDays ?? null, body.vaultCloseTime ?? null, body.walletCheckDays ?? null, body.dinarRoundingIqd ?? null],
       );
       return { body: await settings(q) };
     });

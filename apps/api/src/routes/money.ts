@@ -7,7 +7,7 @@
 //   POST /v1/payments                 Office or wallet payment, applied to the oldest unpaid
 //   POST /v1/payments/parts           One visit paid in more than one way: dollars and dinars, cash and a wallet
 //   GET  /v1/errors                   The CEO's Error entries
-//   POST /v1/errors                   A small amount off what a customer owes, with no money arriving
+//   POST /v1/errors                   An amount off what a customer owes, or onto it, with no money moving
 //   GET  /v1/cash-outs                Cash paid out of the vault
 //   POST /v1/cash-outs                China, driver pay, fuel and car, customs and airport, rent and salaries, other
 //   POST /v1/exchanges                Dinars changed into dollars, or back
@@ -92,7 +92,7 @@ const PAYMENTS = `
          p.paid_for_consignment_id, p.reversed
   from payments p join customers c on c.id = p.customer_id`;
 
-const ERRORS = `select x.entry_id, x.customer_id, x.customer_name, x.amount_usd_cents, x.happened_at, x.created_at, x.note, x.reversed from error_entries x`;
+const ERRORS = `select x.entry_id, x.customer_id, x.customer_name, x.amount_usd_cents, x.added, x.consignment_id, x.happened_at, x.created_at, x.note, x.reversed from error_entries x`;
 const toError = (row: Row): ErrorEntry => camel<ErrorEntry>(row);
 
 interface PaymentInput {
@@ -330,11 +330,16 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
     return write(ctx, request, reply, async ({ q, auth, key }) => {
       const customer = await q.first("select 1 from customers where id = $1 and merged_into is null", [body.customerId]);
       if (customer === undefined) throw notFound("That customer");
-      // The database holds it to the limit in Settings and to what he owes.
+      // The database holds it to what he owes, and an addition to one of his consignments.
       const entryId = await postEntry(
         q,
-        errorCorrection({ customerId: body.customerId, amountUsdCents: BigInt(body.amountUsdCents), ...(body.note === undefined ? {} : { reason: body.note }) }),
-        { happenedAt: at, createdBy: auth.user.id, key: `api:${key}` },
+        errorCorrection({
+          customerId: body.customerId,
+          amountUsdCents: BigInt(body.amountUsdCents),
+          add: body.add === true,
+          ...(body.note === undefined ? {} : { reason: body.note }),
+        }),
+        { happenedAt: at, createdBy: auth.user.id, key: `api:${key}`, ...(body.consignmentId === undefined ? {} : { forConsignment: body.consignmentId }) },
       );
       const row = await q.first(`${ERRORS} where x.entry_id = $1`, [entryId]);
       return { status: 201, body: toError(row as Row) };

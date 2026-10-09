@@ -448,50 +448,51 @@ test("a customer pays in dollars and dinars together, and the rounded dinars set
   await expect(page.getByText("He owes", { exact: true }).locator("..")).toContainText("$0.00");
 });
 
-test("a few dollars nobody will chase are taken off with an Error entry, up to the limit in Settings", async () => {
+test("an Error entry takes an amount off what he owes, or adds one to his file, with no limit", async () => {
   const { customerId } = await owing("Error Payer", 10_000, "GSSK7002");
   await page.goto(`/money?customer=${customerId}`);
   await page.getByRole("radio", { name: "Error" }).click();
   await expect(page.getByText("He owes $100.00.")).toBeVisible();
-  await expect(page.getByText("At most $5.00 at a time.")).toBeVisible();
 
-  await page.getByLabel("Amount to take off, in dollars").fill("7");
-  await expect(page.getByText("At most $5.00. The limit is in Settings.")).toBeVisible();
+  await page.getByLabel("Amount to take off, in dollars").fill("101");
+  await expect(page.getByText("He owes $100.00", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Enter the error" })).toBeDisabled();
-  await page.getByLabel("Amount to take off, in dollars").fill("4.50");
+  // $40 at once: there is no limit.
+  await page.getByLabel("Amount to take off, in dollars").fill("40");
   await page.getByLabel("Note").fill("Short at the door");
   await page.getByRole("button", { name: "Enter the error" }).click();
-  await expect(page.getByText("$4.50 taken off Error Payer's account")).toBeVisible();
+  await expect(page.getByText("$40.00 taken off Error Payer's account")).toBeVisible();
 
   const listed = page.locator("section").filter({ has: page.getByRole("heading", { name: "Latest errors" }) }).getByRole("row", { name: /Error Payer/ });
-  await expect(listed).toContainText("$4.50");
+  await expect(listed).toContainText("$40.00");
+  await expect(listed).toContainText("taken off");
   await expect(listed).toContainText("Short at the door");
   // No money came in: it is not on the list of payments.
   await expect(page.locator("section").filter({ has: page.getByRole("heading", { name: "Latest payments" }) }).getByRole("row", { name: /Error Payer/ })).toHaveCount(0);
 
-  // His limit is his own to change.
-  await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByLabel("Round dinars to the nearest")).toHaveValue("1000");
-  await page.getByLabel("An Error entry is at most, in dollars").fill("10");
-  await page.getByRole("button", { name: "Save the money rules" }).click();
-  await expect(page.getByText("Settings saved")).toBeVisible();
-
+  // The other way: $12.50 that was left off his file.
   await page.goto(`/money?customer=${customerId}`);
   await page.getByRole("radio", { name: "Error" }).click();
-  await expect(page.getByText("He owes $95.50.")).toBeVisible();
-  await page.getByLabel("Amount to take off, in dollars").fill("7");
-  await page.getByRole("button", { name: "Enter the error" }).click();
-  await expect(page.getByText("$7.00 taken off Error Payer's account")).toBeVisible();
+  await page.getByRole("radio", { name: "Add to what he owes" }).click();
+  await expect(page.getByLabel("Add it to")).toContainText("GSSK7002");
+  await page.getByLabel("Amount to add, in dollars").fill("12.50");
+  await page.getByRole("button", { name: "Add the error" }).click();
+  await expect(page.getByText("$12.50 added to Error Payer's account")).toBeVisible();
+  await expect(listed.filter({ hasText: "$12.50" })).toContainText("added");
 
   // Taken back like any other entry.
-  await listed.filter({ hasText: "$7.00" }).getByRole("button", { name: "Reverse" }).click();
+  await listed.filter({ hasText: "$40.00" }).getByRole("button", { name: "Reverse" }).click();
   await page.getByRole("dialog").getByLabel("Why").fill("He paid it after all");
   await page.getByRole("dialog").getByRole("button", { name: "Reverse it" }).click();
-  await expect(listed.filter({ hasText: "$7.00" })).toContainText("reversed");
+  await expect(listed.filter({ hasText: "$40.00" })).toContainText("reversed");
+
+  // No limit in Settings any more.
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByLabel("Round dinars to the nearest")).toHaveValue("1000");
+  await expect(page.getByText("An Error entry has no limit.")).toBeVisible();
 
   await page.goto(`/customers/${customerId}/statement`);
-  await expect(page.getByText("He owes", { exact: true }).locator("..")).toContainText("$95.50");
-  await expect(page.getByRole("row", { name: /Error/ }).first()).toContainText("$4.50");
+  await expect(page.getByText("He owes", { exact: true }).locator("..")).toContainText("$112.50");
 });
 
 test("at the door a customer pays the driver in dollars and dinars, and the driver holds both", async () => {
@@ -549,7 +550,7 @@ test("a stop that came up a little short is let go from the round with one click
   await expect(page.getByText("The driver forgot to collect.")).toBeVisible();
 
   await page.getByRole("link", { name: "$0.62 short: enter as Error" }).click();
-  await expect(page).toHaveURL(/\/money\?customer=.*&error=62$/);
+  await expect(page).toHaveURL(/\/money\?customer=.*&error=62&consignment=/);
   await expect(page.getByRole("radio", { name: "Error" })).toBeChecked();
   await expect(page.getByText("He owes $0.62.")).toBeVisible();
   await expect(page.getByLabel("Amount to take off, in dollars")).toHaveValue("0.62");

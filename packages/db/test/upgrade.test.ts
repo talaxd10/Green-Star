@@ -110,7 +110,7 @@ test("an office that had an owner and an office screen: both are switched off an
     "1|89000|6138",
   );
   assert.equal(sql("select count(*) from round_payment_entries;"), "1");
-  assert.equal(sql("select dinar_rounding_iqd || '|' || error_max_usd_cents from settings;"), "1000|500");
+  assert.equal(sql("select dinar_rounding_iqd from settings;"), "1000");
   assert.equal(sql("select string_agg(code || ':' || balance, ' ' order by code) from account_overview where kind = 'adjustment';"), "dinar_rounding_usd:0 errors_usd:0");
 
   // The 62 cents from before can be let go with an Error entry, and that can be taken back.

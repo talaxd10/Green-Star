@@ -192,10 +192,11 @@ test("a payment in parts is checked before anything is saved, and saved whole or
   await s.sound();
 });
 
-test("the rounding step and the Error limit are in Settings, and changing them changes what is taken", async () => {
+test("the rounding step is in Settings, and changing it changes what is taken", async () => {
   const start = await settings();
-  assert.deepEqual([start.dinarRoundingIqd, start.errorMaxUsdCents], [1_000, 500]);
-  for (const bad of [{ dinarRoundingIqd: -1 }, { dinarRoundingIqd: 10_001 }, { dinarRoundingIqd: 250.5 }, { errorMaxUsdCents: -1 }, { errorMaxUsdCents: 10_001 }, { errorMaxUsdCents: 1.5 }, { dinarRoundingIqd: "1000" }]) {
+  assert.equal(start.dinarRoundingIqd, 1_000);
+  assert.equal("errorMaxUsdCents" in start, false, "there is no Error limit any more");
+  for (const bad of [{ dinarRoundingIqd: -1 }, { dinarRoundingIqd: 10_001 }, { dinarRoundingIqd: 250.5 }, { errorMaxUsdCents: 500 }, { dinarRoundingIqd: "1000" }]) {
     assert.equal((await s.send("PUT", "/v1/settings", bad)).status, 400, JSON.stringify(bad));
   }
   assert.deepEqual(await settings(), start, "nothing changed");
@@ -212,7 +213,7 @@ test("the rounding step and the Error limit are in Settings, and changing them c
 
     const quarter = await s.send("PUT", "/v1/settings", { dinarRoundingIqd: 250 });
     assert.equal(quarter.status, 200);
-    assert.deepEqual([quarter.body.dinarRoundingIqd, quarter.body.errorMaxUsdCents, quarter.body.heldInCarDays], [250, 500, start.heldInCarDays], "only what is sent changes");
+    assert.deepEqual([quarter.body.dinarRoundingIqd, quarter.body.heldInCarDays], [250, start.heldInCarDays], "only what is sent changes");
     assert.equal(await pay(await owing()), 6_207, "to the nearest 250 it does not: he is 17 cents in credit");
 
     await s.send("PUT", "/v1/settings", { dinarRoundingIqd: 0 });
@@ -224,10 +225,10 @@ test("the rounding step and the Error limit are in Settings, and changing them c
   }
   const log = await h.owner.query("select actor, before ->> 'dinar_rounding_iqd' as was, after ->> 'dinar_rounding_iqd' as is from audit_log where entity = 'settings' order by id desc limit 1");
   assert.deepEqual(log.rows[0], { actor: ceo.id, was: "0", is: "1000" });
-  assert.deepEqual(await settings().then((x) => [x.dinarRoundingIqd, x.errorMaxUsdCents]), [1_000, 500]);
+  assert.equal((await settings()).dinarRoundingIqd, 1_000);
 });
 
-test("an Error entry takes a small amount off what he owes, shows on his account, and is reversed like any entry", async () => {
+test("an Error entry takes an amount off what he owes, shows on his account, and is reversed like any entry", async () => {
   const name = "ERROR PAYER " + randomUUID().slice(0, 6).toUpperCase();
   const a = await s.customer(name);
   const file = await s.file([[a, 53_300]]);
@@ -239,8 +240,8 @@ test("an Error entry takes a small amount off what he owes, shows on his account
   const made = await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 500, note: "  Short at the door, let go " }, key);
   assert.equal(made.status, 201, JSON.stringify(made.body));
   assert.deepEqual(
-    [made.body.customerId, made.body.customerName, made.body.amountUsdCents, made.body.note, made.body.reversed],
-    [a, name, 500, "Short at the door, let go", false],
+    [made.body.customerId, made.body.customerName, made.body.amountUsdCents, made.body.added, made.body.consignmentId, made.body.note, made.body.reversed],
+    [a, name, 500, false, null, "Short at the door, let go", false],
   );
   assert.ok(!Number.isNaN(Date.parse(made.body.happenedAt)) && !Number.isNaN(Date.parse(made.body.createdAt)));
   assert.deepEqual((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 500, note: "  Short at the door, let go " }, key)).body, made.body, "the same click again is the same entry");
@@ -286,14 +287,13 @@ test("an Error entry takes a small amount off what he owes, shows on his account
   await s.sound();
 });
 
-test("an Error entry is at most the limit, at most what he owes, and never changes what was asked into something else", async () => {
+test("an Error entry has no limit, is at most what he owes, and never changes what was asked into something else", async () => {
   const a = await s.customer();
-  await s.file([[a, 1_000]]);
+  await s.file([[a, 100_000]]);
 
-  const tooMuch = await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 501 });
-  assert.equal(tooMuch.status, 422);
-  assert.equal(tooMuch.body.code, "error_too_large");
-  assert.match(tooMuch.body.message, /at most \$5\.00/);
+  // $900 at once: there is no limit.
+  assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 90_000 })).status, 201);
+  assert.equal(await s.balance(a), 10_000);
 
   for (const [body, field] of [
     [{ customerId: a, amountUsdCents: 0 }, "amountUsdCents"],
@@ -302,6 +302,8 @@ test("an Error entry is at most the limit, at most what he owes, and never chang
     [{ customerId: a }, "amountUsdCents"],
     [{ amountUsdCents: 100 }, "customerId"],
     [{ customerId: a, amountUsdCents: 100, direction: "owes_more" }, "_"],
+    [{ customerId: a, amountUsdCents: 100, add: true }, "consignmentId"],
+    [{ customerId: a, amountUsdCents: 100, add: "yes" }, "add"],
   ] as const) {
     const reply = await s.send("POST", "/v1/errors", body);
     assert.equal(reply.status, 400, JSON.stringify(body));
@@ -310,28 +312,49 @@ test("an Error entry is at most the limit, at most what he owes, and never chang
   assert.equal((await s.send("POST", "/v1/errors", { customerId: randomUUID(), amountUsdCents: 100 })).status, 404);
   assert.equal((await call(h.app, "POST", "/v1/errors", { body: { customerId: a, amountUsdCents: 100 } })).status, 401);
   assert.equal((await call(h.app, "GET", "/v1/errors")).status, 401);
-  assert.equal(await s.balance(a), 1_000);
+  assert.equal(await s.balance(a), 10_000);
 
-  assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 500 })).status, 201);
-  assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 400 })).status, 201);
+  assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 9_900 })).status, 201);
   const more = await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 200 });
   assert.equal(more.status, 422);
   assert.equal(more.body.code, "error_more_than_owed");
   assert.match(more.body.message, /he owes \$1\.00/);
   assert.equal(await s.balance(a), 100);
+  await s.sound();
+});
 
-  // The limit is his to change, and 0 switches Error entries off.
-  try {
-    await s.file([[a, 5_000]]);
-    assert.equal((await s.send("PUT", "/v1/settings", { errorMaxUsdCents: 1_000 })).body.errorMaxUsdCents, 1_000);
-    assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 1_000 })).status, 201);
-    assert.match((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 1_001 })).body.message, /at most \$10\.00/);
-    await s.send("PUT", "/v1/settings", { errorMaxUsdCents: 0 });
-    assert.equal((await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 1 })).body.code, "error_too_large");
-  } finally {
-    await s.send("PUT", "/v1/settings", { errorMaxUsdCents: 500 });
-  }
-  assert.equal(await s.balance(a), 4_100);
+test("an Error entry adds to what he owes, onto the consignment picked, and is reversed like any entry", async () => {
+  const a = await s.customer();
+  const b = await s.customer();
+  const file = await s.file([[a, 20_000], [b, 5_000]]);
+  const mine = file.by[a] as string;
+  const before = await s.account("errors_usd");
+
+  const added = await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 1_250, add: true, consignmentId: mine, note: "One carton was not on the file" });
+  assert.equal(added.status, 201, JSON.stringify(added.body));
+  assert.deepEqual([added.body.amountUsdCents, added.body.added, added.body.consignmentId], [1_250, true, mine]);
+  assert.equal(await s.balance(a), 21_250);
+  assert.equal((await s.account("errors_usd")) - before, -1_250);
+  const consignment = (await s.get(`/v1/consignments?customerId=${a}`)).body.items[0];
+  assert.deepEqual([consignment.remainingUsdCents, consignment.errorsAddedUsdCents], [21_250, 1_250]);
+
+  // Someone else's consignment is refused.
+  const wrong = await s.send("POST", "/v1/errors", { customerId: a, amountUsdCents: 100, add: true, consignmentId: file.by[b] });
+  assert.equal(wrong.status, 422);
+  assert.equal(wrong.body.code, "target_invalid");
+
+  // His statement shows it as a correction that adds.
+  const statement = (await s.get(`/v1/customers/${a}/statement`)).body;
+  assert.deepEqual(statement.lines.map((l: { kind: string; changeUsdCents: number }) => [l.kind, l.changeUsdCents]), [["charge", 20_000], ["correction", 1_250]]);
+
+  // A consignment with an Error added is not cancelled on its own.
+  const cancel = await s.send("POST", `/v1/consignments/${mine}/cancel`, { reason: "Wrong customer" });
+  assert.equal(cancel.status, 422);
+  assert.equal(cancel.body.code, "consignment_has_error");
+
+  assert.equal((await s.send("POST", `/v1/entries/${added.body.entryId}/reverse`, { reason: "Was on the file after all" })).status, 201);
+  assert.equal(await s.balance(a), 20_000);
+  assert.equal((await s.get(`/v1/errors?customerId=${a}`)).body.items[0].reversed, true);
   await s.sound();
 });
 

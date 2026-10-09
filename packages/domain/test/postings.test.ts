@@ -98,6 +98,16 @@ test("an Error entry takes an amount off what the customer owes, with no money a
   assert.throws(() => errorCorrection({ customerId, amountUsdCents: -500n }), RangeError);
 });
 
+test("an Error entry can add to what the customer owes, the other way round", () => {
+  const draft = errorCorrection({ customerId, amountUsdCents: 2500n, add: true });
+  assertBalanced(draft.lines);
+  assert.deepEqual(
+    draft.lines.map((l) => [l.account.type === "system" ? l.account.code : l.account.type, l.amount]),
+    [["errors_usd", -2500n], ["customer", 2500n]],
+  );
+  assert.throws(() => errorCorrection({ customerId, amountUsdCents: 0n, add: true }), RangeError);
+});
+
 test("a dollar payment needs no rate and no conversion", () => {
   const entry = officePayment({ customerId, received: usd(4000) });
   assert.equal(entry.ratePer100, undefined);

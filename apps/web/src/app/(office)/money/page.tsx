@@ -1,6 +1,6 @@
 "use client";
 
-import type { Account, CashOut, CashOutCategory, Currency, CustomerDetail, CustomerSummary, ErrorEntry, OfficeMethod, Page, Payment, PaymentParts, Rate, Settings } from "@green-star/contracts";
+import type { Account, CashOut, CashOutCategory, Consignment, Currency, CustomerDetail, CustomerSummary, ErrorEntry, OfficeMethod, Page, Payment, PaymentParts, Rate, Settings } from "@green-star/contracts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
@@ -304,42 +304,49 @@ function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
   );
 }
 
-/** The CEO's "Error" entry: a small amount off what a customer owes, with no money arriving. */
-function ErrorForm({ initial, initialCents }: { initial: CustomerSummary | null; initialCents: number | null }) {
+/** The CEO's "Error" entry: an amount off what a customer owes, or onto it, with no money moving. No limit. */
+function ErrorForm({ initial, initialCents, initialConsignment }: { initial: CustomerSummary | null; initialCents: number | null; initialConsignment: string | null }) {
   const toast = useToast();
-  const settings = useGet<Settings>("/v1/settings");
   const [customer, setCustomer] = useState<CustomerSummary | null>(initial);
-  // Opened from a stop that came up a little short: the amount is already filled in.
+  const [direction, setDirection] = useState<"off" | "add">("off");
+  // Opened from a stop that came up short: the amount and the goods are already filled in.
   const [amount, setAmount] = useState(initialCents === null ? "" : amountForInput(initialCents, "USD"));
+  const [consignmentId, setConsignmentId] = useState<string>(initialConsignment ?? "");
   const [note, setNote] = useState("");
+  const consignments = useGet<{ items: Consignment[] }>(customer === null ? null : `/v1/consignments?customerId=${customer.id}`);
 
   useEffect(() => setCustomer(initial), [initial]);
+  useEffect(() => {
+    // Adding goes onto one of his consignments: his newest, unless one was picked.
+    const items = consignments.data?.items ?? [];
+    if (items.length > 0 && !items.some((c) => c.id === consignmentId)) setConsignmentId(items[items.length - 1]?.id ?? "");
+  }, [consignments.data, consignmentId]);
 
   const enter = useSave(
     (body: unknown, key: string) => api.post<ErrorEntry>("/v1/errors", body, key),
     (made) => {
-      toast(`${formatMoney(made.amountUsdCents, "USD")} taken off ${made.customerName}'s account`);
+      toast(made.added ? `${formatMoney(made.amountUsdCents, "USD")} added to ${made.customerName}'s account` : `${formatMoney(made.amountUsdCents, "USD")} taken off ${made.customerName}'s account`);
       setAmount("");
       setNote("");
       setCustomer(null);
     },
   );
 
-  const limit = settings.data?.errorMaxUsdCents ?? null;
+  const adding = direction === "add";
   const typed = amount.trim() === "" ? null : parseAmount(amount, "USD");
   const owes = customer?.balanceUsdCents ?? null;
-  // What the screen can see is wrong before it is sent. The database holds the same two limits.
+  const items = consignments.data?.items ?? [];
+  // What the screen can see is wrong before it is sent. The database holds the same rules.
   const local =
     amount.trim() !== "" && typed === null
       ? "That is not an amount"
-      : typed !== null && limit !== null && typed > limit
-        ? `At most ${formatMoney(limit, "USD")}. The limit is in Settings.`
-        : typed !== null && owes !== null && typed > Math.max(owes, 0)
-          ? owes > 0
-            ? `He owes ${formatMoney(owes, "USD")}`
-            : "He owes nothing"
-          : undefined;
+      : !adding && typed !== null && owes !== null && typed > Math.max(owes, 0)
+        ? owes > 0
+          ? `He owes ${formatMoney(owes, "USD")}`
+          : "He owes nothing"
+        : undefined;
   const problem = local ?? enter.fieldProblem("amountUsdCents");
+  const noGoods = adding && customer !== null && consignments.data !== undefined && items.length === 0;
 
   return (
     <form
@@ -347,18 +354,48 @@ function ErrorForm({ initial, initialCents }: { initial: CustomerSummary | null;
       noValidate
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void enter.save({ customerId: customer?.id, amountUsdCents: typed, ...(note.trim() === "" ? {} : { note }) });
+        void enter.save({
+          customerId: customer?.id,
+          amountUsdCents: typed,
+          ...(adding ? { add: true, consignmentId } : consignmentId !== "" && initialConsignment === consignmentId ? { consignmentId } : {}),
+          ...(note.trim() === "" ? {} : { note }),
+        });
       }}
     >
       <p className="rounded-md bg-sunken px-3 py-2 text-[13px] text-muted">
-        For a small difference that is not worth chasing. It takes the amount off what he owes; no money comes in.
-        {limit !== null ? <> At most <b className="num text-ink">{formatMoney(limit, "USD")}</b> at a time.</> : null}
+        For a difference that is not worth chasing, or an amount that was left off. No money moves, and there is no limit. It shows on his statement as its own line.
       </p>
-      <Field label="Customer" hint={customer ? (customer.balanceUsdCents > 0 ? <>He owes <b className="num">{formatMoney(customer.balanceUsdCents, "USD")}</b>.</> : "He owes nothing, so there is nothing to take off.") : undefined} problem={enter.fieldProblem("customerId")}>
+      <Segmented
+        label="Which way"
+        value={direction}
+        onChange={(v) => {
+          setDirection(v);
+          enter.clear();
+        }}
+        options={[
+          { value: "off", label: "Take off what he owes" },
+          { value: "add", label: "Add to what he owes" },
+        ]}
+      />
+      <Field label="Customer" hint={customer ? (customer.balanceUsdCents > 0 ? <>He owes <b className="num">{formatMoney(customer.balanceUsdCents, "USD")}</b>.</> : adding ? "He owes nothing now." : "He owes nothing, so there is nothing to take off.") : undefined} problem={enter.fieldProblem("customerId")}>
         {(id) => <CustomerPicker id={id} value={customer} onChange={setCustomer} />}
       </Field>
+      {adding && customer !== null ? (
+        <Field label="Add it to" hint="Everything a customer owes belongs to a file. Payments pay it like the rest." problem={noGoods ? "He has no goods on a confirmed file to add it to" : enter.fieldProblem("consignmentId")}>
+          {(id) => (
+            <Select id={id} value={consignmentId} onChange={(e) => setConsignmentId(e.target.value)} disabled={items.length === 0}>
+              {items.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.shipmentCode} · {formatMoney(c.amountDueUsdCents, "USD")}
+                  {c.remainingUsdCents > 0 ? ` · ${formatMoney(c.remainingUsdCents, "USD")} left` : " · paid"}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      ) : null}
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Amount to take off, in dollars" problem={problem}>
+        <Field label={adding ? "Amount to add, in dollars" : "Amount to take off, in dollars"} problem={problem}>
           {(id) => <Input id={id} className="num text-right" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => { setAmount(e.target.value); enter.clear(); }} problem={problem} />}
         </Field>
         <Field label="Note" hint="Optional: what the difference was">
@@ -367,8 +404,8 @@ function ErrorForm({ initial, initialCents }: { initial: CustomerSummary | null;
       </div>
       <Problem of={enter.problem} />
       <div>
-        <Button type="submit" tone="primary" busy={enter.saving} disabled={customer === null || typed === null || typed === 0 || local !== undefined}>
-          Enter the error
+        <Button type="submit" tone="primary" busy={enter.saving} disabled={customer === null || typed === null || typed === 0 || local !== undefined || noGoods || (adding && consignmentId === "")}>
+          {adding ? "Add the error" : "Enter the error"}
         </Button>
       </div>
     </form>
@@ -547,7 +584,8 @@ function MoneyScreen() {
   const search = useSearchParams();
   const customerId = search.get("customer");
   // /money?customer=…&error=44 opens the Error tab with 44 cents filled in.
-  const errorCents = /^[1-9]\d{0,5}$/.test(search.get("error") ?? "") ? Number(search.get("error")) : null;
+  const errorCents = /^[1-9]\d{0,9}$/.test(search.get("error") ?? "") ? Number(search.get("error")) : null;
+  const errorConsignment = /^[0-9a-f-]{36}$/.test(search.get("consignment") ?? "") ? search.get("consignment") : null;
   const preset = useGet<CustomerDetail>(customerId === null ? null : `/v1/customers/${customerId}`);
   const [tab, setTab] = useState<Tab>(errorCents === null ? "payment" : "error");
   const [reversing, setReversing] = useState<{ entryId: string; what: string } | null>(null);
@@ -565,7 +603,7 @@ function MoneyScreen() {
             <div className="border-b border-rule px-5 py-3.5">
               <Segmented label="What is being entered" value={tab} onChange={setTab} options={TABS} />
             </div>
-            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} initialCents={errorCents} />}
+            {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} initialCents={errorCents} initialConsignment={errorConsignment} />}
           </Card>
           <WalletsCard />
         </div>
@@ -668,13 +706,13 @@ function MoneyScreen() {
 
           {errors.data !== undefined && errors.data.items.length > 0 ? (
             <Card>
-              <CardHead title="Latest errors" hint="Small amounts taken off a customer's account with no money arriving." />
+              <CardHead title="Latest errors" hint="Amounts taken off a customer's account, or added to it, with no money moving." />
               <Table>
                 <thead>
                   <tr>
                     <Th>When</Th>
                     <Th>Customer</Th>
-                    <Th right>Taken off</Th>
+                    <Th right>Amount</Th>
                     <Th />
                   </tr>
                 </thead>
@@ -689,6 +727,7 @@ function MoneyScreen() {
                         {x.note ? <span className="block text-[12px] text-muted">{x.note}</span> : null}
                       </Td>
                       <Td right>
+                        <span className="mr-2 text-[12px] text-muted">{x.added ? "added" : "taken off"}</span>
                         <Money amount={x.amountUsdCents} className={x.reversed ? "line-through" : undefined} />
                       </Td>
                       <Td right>

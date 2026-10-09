@@ -70,7 +70,7 @@ export const account = {
   chinaPayable: (): AccountRef => ({ type: "system", code: "china_payable" }),
   /** What dinar rounding gave and took. */
   dinarRounding: (): AccountRef => ({ type: "system", code: "dinar_rounding_usd" }),
-  /** What the CEO wrote off as an error. */
+  /** What the CEO let go, or added, as an error. */
   errors: (): AccountRef => ({ type: "system", code: "errors_usd" }),
   customer: (customerId: string): AccountRef => ({ type: "customer", customerId }),
   driverCash: (roundId: string, currency: Currency): AccountRef => ({ type: "driver_cash", roundId, currency }),
@@ -227,18 +227,20 @@ export function walletPayment(input: {
 }
 
 /**
- * The CEO's "Error" entry: a small amount taken off what one customer owes,
- * with no money arriving. The database holds it to the limit in Settings and
- * to what he owes.
+ * The CEO's "Error" entry: an amount taken off what one customer owes, or
+ * added to it, with no money moving. There is no limit. Taking off never goes
+ * below nothing, and adding goes onto one of his consignments (the database
+ * holds both). `add` false, the default, takes off.
  */
-export function errorCorrection(input: { customerId: string; amountUsdCents: bigint; reason?: string }): EntryDraft {
+export function errorCorrection(input: { customerId: string; amountUsdCents: bigint; add?: boolean; reason?: string }): EntryDraft {
   positive(input.amountUsdCents, "the amount of an Error entry");
   const reason = input.reason?.trim();
+  const toCustomer = input.add === true ? input.amountUsdCents : -input.amountUsdCents;
   return draft(
     "error_correction",
     [
-      { account: account.errors(), currency: "USD", amount: input.amountUsdCents },
-      { account: account.customer(input.customerId), currency: "USD", amount: -input.amountUsdCents },
+      { account: account.errors(), currency: "USD", amount: -toCustomer },
+      { account: account.customer(input.customerId), currency: "USD", amount: toCustomer },
     ],
     reason ? { reason } : {},
   );

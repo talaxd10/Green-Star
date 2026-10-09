@@ -310,17 +310,16 @@ test("an Error entry takes a small amount off what he owes, and closes his file 
   assert.equal(health(), "");
 });
 
-test("an Error entry is never more than the limit in Settings, and never more than he owes", () => {
-  const customer = newCustomer("Owes Ten");
-  charge(customer, 1000n, at(5));
-  refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 501n }), at()), /error_too_large: an Error entry is at most \$5\.00/);
-  refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 100000n }), at()), /error_too_large/);
-  post(errorCorrection({ customerId: customer, amountUsdCents: 500n }), at());
-  post(errorCorrection({ customerId: customer, amountUsdCents: 300n }), at());
-  assert.equal(customerBalance(customer), 200n);
-  // He owes $2.00 now: $3.00 cannot come off.
-  refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 300n }), at()), /error_more_than_owed: he owes \$2\.00/);
-  post(errorCorrection({ customerId: customer, amountUsdCents: 200n }), at());
+test("an Error entry has no limit, and never takes off more than he owes", () => {
+  const customer = newCustomer("Owes Two Hundred");
+  charge(customer, 20000n, at(5));
+  // $150 at once: there is no limit any more (the CEO, October 2026).
+  post(errorCorrection({ customerId: customer, amountUsdCents: 15000n }), at());
+  post(errorCorrection({ customerId: customer, amountUsdCents: 3000n }), at());
+  assert.equal(customerBalance(customer), 2000n);
+  // He owes $20.00 now: $30.00 cannot come off. That would be credit for money that never came.
+  refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 3000n }), at()), /error_more_than_owed: he owes \$20\.00/);
+  post(errorCorrection({ customerId: customer, amountUsdCents: 2000n }), at());
   assert.equal(customerBalance(customer), 0n);
   refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 1n }), at()), /error_more_than_owed/);
 
@@ -330,10 +329,10 @@ test("an Error entry is never more than the limit in Settings, and never more th
   refused(() => post(errorCorrection({ customerId: paidUp, amountUsdCents: 100n }), at()), /error_more_than_owed/);
   assert.equal(customerBalance(paidUp), -5000n);
 
-  // It only ever takes off: it cannot add to what he owes, move money, or touch two customers.
+  // It does not move money or touch two customers, and adding needs a consignment.
   const other = newCustomer("Other");
   charge(other, 1000n, at(5));
-  refused(() => app(raw("error_correction", [[other, "USD", 100n], ["errors_usd", "USD", -100n]])), /entry_shape/);
+  refused(() => app(raw("error_correction", [[other, "USD", 100n], ["errors_usd", "USD", -100n]])), /error_needs_consignment/);
   refused(() => app(raw("error_correction", [["vault_usd", "USD", 100n], [other, "USD", -100n]])), /entry_shape/);
   refused(() => app(raw("error_correction", [["dinar_rounding_usd", "USD", 100n], [other, "USD", -100n]])), /entry_shape: a error_correction entry cannot move the dinar_rounding_usd account/);
   const third = newCustomer("Third");
@@ -344,25 +343,82 @@ test("an Error entry is never more than the limit in Settings, and never more th
   assert.equal(health(), "");
 });
 
-test("the Error limit is in Settings, changed only by the CEO, and 0 switches Error entries off", () => {
-  assert.equal(app("select error_max_usd_cents from settings;"), "500");
-  refused(() => app("update settings set error_max_usd_cents = -1;"), /settings_error_max/);
-  refused(() => app("update settings set error_max_usd_cents = 10001;"), /settings_error_max/);
-  refused(() => appNoActor("update settings set error_max_usd_cents = 9000;"), /actor_required/);
-  refused(() => appAs(switchedOff())("update settings set error_max_usd_cents = 9000;"), /actor_unknown/);
+test("an Error entry adds to what he owes, onto one of his consignments, and payments pay it", () => {
+  const customer = newCustomer("Charged Too Little");
+  const first = charge(customer, 10000n, at(4)).consignmentId;
+  const second = charge(customer, 20000n, at(5)).consignmentId;
+  const errors = on("errors_usd");
 
-  const customer = newCustomer("Limit Raised");
-  charge(customer, 5000n, at(5));
-  try {
-    app("update settings set error_max_usd_cents = 1000;");
-    post(errorCorrection({ customerId: customer, amountUsdCents: 1000n }), at());
-    refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 1001n }), at()), /error_too_large: an Error entry is at most \$10\.00/);
-    app("update settings set error_max_usd_cents = 0;");
-    refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 1n }), at()), /error_too_large/);
-  } finally {
-    app("update settings set error_max_usd_cents = 500;");
-  }
-  assert.equal(customerBalance(customer), 4000n);
+  // $12.50 too little on the second file.
+  const added = postFor(errorCorrection({ customerId: customer, amountUsdCents: 1250n, add: true, reason: "Forgot the extra carton" }), second);
+  assert.equal(customerBalance(customer), 31250n);
+  assert.deepEqual([remaining(first), remaining(second)], [10000n, 21250n], "it is owed on the consignment it was added to");
+  assert.equal(on("errors_usd") - errors, -1250n);
+  assert.equal(
+    app(`select amount_usd_cents || '|' || added || '|' || consignment_id || '|' || note from error_entries where entry_id = ${lit(added)};`),
+    `1250|true|${second}|Forgot the extra carton`,
+  );
+  assert.equal(app(`select errors_added_usd_cents from consignment_details where consignment_id = ${lit(second)};`), "1250");
+  assert.equal(app(`select count(*) from customer_payments where entry_id = ${lit(added)};`), "0", "what is added is owed, not paid");
+  assert.equal(health(), "");
+
+  // Payments pay it the usual way, oldest first.
+  post(officePayment({ customerId: customer, received: usd(31250n) }), at(10));
+  assert.deepEqual([customerBalance(customer), remaining(first), remaining(second)], [0n, 0n, 0n]);
+  assert.equal(
+    app(`select string_agg(what || ':' || change_usd_cents, ' ' order by line_no) from gs_customer_statement(${lit(customer)});`),
+    "file_confirmed:10000 file_confirmed:20000 error_correction:1250 office_payment:-31250",
+  );
+  assert.equal(health(), "");
+
+  // Reversed, he is $12.50 in credit.
+  app(`select gs_reverse_entry(${lit(added)}, ${lit(USER)}, 'Typed on the wrong customer', ${lit(randomUUID())}, ${lit(at(11).toISOString())});`);
+  assert.equal(customerBalance(customer), -1250n);
+  assert.deepEqual([remaining(second), on("errors_usd")], [0n, errors]);
+  assert.equal(health(), "");
+});
+
+test("an Error that was added and paid, then reversed: the money that paid it goes to his next file", () => {
+  const customer = newCustomer("Paid The Error");
+  const first = charge(customer, 10000n, at(4)).consignmentId;
+  const second = charge(customer, 20000n, at(5)).consignmentId;
+  const added = postFor(errorCorrection({ customerId: customer, amountUsdCents: 5000n, add: true }), first);
+  post(officePayment({ customerId: customer, received: usd(15000n) }), at(10));
+  assert.deepEqual([remaining(first), remaining(second)], [0n, 20000n]);
+
+  app(`select gs_reverse_entry(${lit(added)}, ${lit(USER)}, 'Was right the first time', ${lit(randomUUID())}, ${lit(at(11).toISOString())});`);
+  assert.deepEqual([customerBalance(customer), remaining(first), remaining(second)], [15000n, 0n, 15000n], "the $50 that paid the Error now pays the second file");
+  assert.equal(app(`select count(*) from allocation_releases r join allocations a on a.id = r.allocation_id where a.consignment_id = ${lit(first)};`), "1");
+  assert.equal(health(), "");
+});
+
+test("an Error entry adds only to a live consignment of the same customer, which then is not cancelled on its own", () => {
+  const customer = newCustomer("Error On File");
+  const mine = charge(customer, 5000n, at(5)).consignmentId;
+  const someoneElse = charge(newCustomer("Not Him"), 5000n, at(5)).consignmentId;
+  const add = (consignmentId: string) => postFor(errorCorrection({ customerId: customer, amountUsdCents: 700n, add: true }), consignmentId);
+  refused(() => add(someoneElse), /target_invalid/);
+  refused(() => post(errorCorrection({ customerId: customer, amountUsdCents: 700n, add: true }), at()), /error_needs_consignment/);
+
+  const entry = add(mine);
+  refused(() => app(`select gs_cancel_consignment(${lit(mine)}, ${lit(USER)}, 'Wrong customer');`), /consignment_has_error: an Error entry added to this consignment\. Reverse it first\./);
+
+  // Correcting the amount carries the Error over to the replacement.
+  const replacement = app(`select gs_correct_consignment(${lit(mine)}, 6000, 0, ${lit(USER)}, 'Price was $60');`);
+  assert.equal(customerBalance(customer), 6700n);
+  assert.equal(remaining(replacement), 6700n);
+  assert.equal(health(), "");
+
+  // Reversed, the replacement can be cancelled; nothing is owed on a cancelled one.
+  app(`select gs_reverse_entry(${lit(entry)}, ${lit(USER)}, 'Not an error', ${lit(randomUUID())}, ${lit(at(11).toISOString())});`);
+  app(`select gs_cancel_consignment(${lit(replacement)}, ${lit(USER)}, 'Wrong customer');`);
+  assert.equal(customerBalance(customer), 0n);
+  refused(() => add(replacement), /error_needs_consignment/);
+  assert.equal(health(), "");
+});
+
+test("there is no Error limit in Settings any more", () => {
+  refused(() => app("select error_max_usd_cents from settings;"), /column "error_max_usd_cents" does not exist/);
 });
 
 test("an Error entry carries the name of the CEO who is signed in", () => {
@@ -396,7 +452,7 @@ test("random charges, payments in both currencies, rounding and errors keep ever
   const errors = on("errors_usd");
   let expectedRounding = 0n;
   let expectedErrors = 0n;
-  const did = { settled: 0, exact: 0, dollars: 0, errors: 0, charged: 0 };
+  const did = { settled: 0, exact: 0, dollars: 0, errors: 0, added: 0, charged: 0 };
 
   for (let step = 0; step < 90; step += 1) {
     const customer = customers[next(customers.length)] as string;
@@ -413,6 +469,13 @@ test("random charges, payments in both currencies, rounding and errors keep ever
       post(errorCorrection({ customerId: customer, amountUsdCents: owes }), when);
       expectedErrors += owes;
       did.errors += 1;
+    } else if (what === 2) {
+      // Something added: onto his newest consignment still on the books.
+      const target = app(`select consignment_id from consignment_money where customer_id = ${lit(customer)} and due_usd_cents > 0 order by consignment_id desc limit 1;`);
+      const amount = BigInt(1 + next(2000));
+      postFor(errorCorrection({ customerId: customer, amountUsdCents: amount, add: true }), target, when);
+      expectedErrors -= amount;
+      did.added += 1;
     } else {
       // Dinars: about what he owes rounded to the nearest 1,000 most of the time, any amount otherwise.
       const exactly = usdCentsToIqd(owes, rate);
@@ -429,7 +492,7 @@ test("random charges, payments in both currencies, rounding and errors keep ever
       }
     }
   }
-  assert.ok(did.settled >= 8 && did.exact >= 5 && did.dollars >= 5 && did.charged >= 10, JSON.stringify(did));
+  assert.ok(did.settled >= 8 && did.exact >= 5 && did.dollars >= 5 && did.added >= 3 && did.charged >= 10, JSON.stringify(did));
   assert.equal(on("dinar_rounding_usd") - rounding, expectedRounding);
   assert.equal(on("errors_usd") - errors, expectedErrors);
   // Every customer's balance is what his files still need, less his credit.

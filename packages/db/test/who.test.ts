@@ -99,7 +99,7 @@ function everyChange(who: string): Record<string, string> {
       jsonb_build_object('account_id', gs_customer_account(${lit(other)}), 'currency', 'USD', 'amount', -100)));`,
     "enter a result paid in two ways": resultSql({ roundId: round, consignmentId, outcome: "paid", received: { amount: 3000, currency: "USD" }, more: [{ amount: 3000, currency: "USD", method: "fib" }] }).replace(lit(USER), u),
     "change a setting": `update settings set wallet_check_days = 7;`,
-    "change a money setting": `update settings set dinar_rounding_iqd = 1000, error_max_usd_cents = 500;`,
+    "change a money setting": `update settings set dinar_rounding_iqd = 1000;`,
     "check a wallet": `select gs_check_wallet(${lit(randomUUID())}, 'wallet_fastpay_usd', ${u}, 0, now(), 'read it in the app');`,
     "resolve an alert": `select gs_resolve_alert(${lit(alert)}, ${u}, 'spoke to the driver');`,
     "make a statement": `select gs_record_statement(${lit(randomUUID())}, ${lit(customer)}, ${u}, null, ${balanceNow}, 'You owe $60.00.');`,
@@ -254,7 +254,7 @@ test("a duplicate customer is merged into the real one while it has nothing on t
   assert.equal(app(`select string_agg(phone || ':' || is_primary, ',' order by is_primary desc) from customer_phones where customer_id = ${lit(real)};`), `${realPhone}:true,${dupPhone}:false`);
   assert.equal(app(`select count(*) from customer_phones where customer_id = ${lit(dup)};`), "0");
   assert.equal(app(`select count(*) from customer_marks where customer_id = ${lit(real)};`), "1");
-  assert.equal(app(`select string_agg(alias, ',' order by alias) from customer_aliases where customer_id = ${lit(real)};`), "DARA MHAMAD,Dara Mhamad");
+  assert.equal(app(`select string_agg(alias, ',' order by alias collate "C") from customer_aliases where customer_id = ${lit(real)};`), "DARA MHAMAD,Dara Mhamad");
   assert.equal(app(`select customer_id from consignments where shipment_id = ${lit(draft)};`), real);
   // The file's row now finds the real customer by the duplicate's phone.
   assert.equal(app(`select customer_id from gs_match_customer(${lit(dupPhone)}, null);`), real);

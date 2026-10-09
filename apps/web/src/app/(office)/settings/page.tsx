@@ -228,11 +228,11 @@ function Checks() {
   );
 }
 
-/** The CEO's two rules for small differences: how dinars are rounded, and how big an Error entry can be. */
+/** How dinars are rounded. An Error entry has no limit (the CEO, October 2026). */
 function MoneyRules() {
   const toast = useToast();
   const settings = useGet<Settings>("/v1/settings");
-  const [draft, setDraft] = useState<{ step?: string; limit?: string }>({});
+  const [draft, setDraft] = useState<{ step?: string }>({});
   const save = useSave(
     (body: unknown, key: string) => api.put<Settings>("/v1/settings", body, key),
     () => {
@@ -250,14 +250,10 @@ function MoneyRules() {
   }
   const s = settings.data;
   const step = draft.step ?? String(s.dinarRoundingIqd);
-  const limit = draft.limit ?? amountForInput(s.errorMaxUsdCents, "USD");
   const stepTyped = parseAmount(step, "IQD");
-  const limitTyped = parseAmount(limit, "USD");
   const stepOk = stepTyped !== null && stepTyped <= 10_000;
-  const limitOk = limitTyped !== null && limitTyped <= 10_000;
   const body = {
     ...(stepOk && stepTyped !== s.dinarRoundingIqd ? { dinarRoundingIqd: stepTyped } : {}),
-    ...(limitOk && limitTyped !== s.errorMaxUsdCents ? { errorMaxUsdCents: limitTyped } : {}),
   };
 
   return (
@@ -276,7 +272,7 @@ function MoneyRules() {
             hint={
               stepOk && stepTyped > 0 ? (
                 <>
-                  Dinars within <span className="num">{formatMoney(Math.floor(stepTyped / 2), "IQD")}</span> of what he owes settle it. $133 at 1,570 is 208,810: 209,000 pays it.
+                  From <span className="num">{formatMoney(Math.floor(stepTyped / 2), "IQD")}</span> up rounds up. $133 at 1,570 is 208,810: 209,000 pays it.
                 </>
               ) : (
                 "0 switches rounding off: a dinar payment is worth exactly what it converts to."
@@ -286,17 +282,11 @@ function MoneyRules() {
           >
             {(id) => <Input id={id} className="num" inputMode="numeric" value={step} onChange={(e) => setDraft({ ...draft, step: e.target.value })} />}
           </Field>
-          <Field
-            label="An Error entry is at most, in dollars"
-            hint={limitOk && limitTyped > 0 ? "The most that can be taken off a customer's account at a time with no money arriving." : "0 switches Error entries off."}
-            problem={save.fieldProblem("errorMaxUsdCents") ?? (limitOk ? undefined : "$0 to $100")}
-          >
-            {(id) => <Input id={id} className="num" inputMode="decimal" value={limit} onChange={(e) => setDraft({ ...draft, limit: e.target.value })} />}
-          </Field>
+          <p className="self-end rounded-md bg-sunken px-3 py-2 text-[13px] text-muted">An Error entry has no limit. It can take off what a customer owes, or add to it, on the Money screen.</p>
         </div>
         <Problem of={save.problem} />
         <div>
-          <Button type="submit" busy={save.saving} disabled={!stepOk || !limitOk || Object.keys(body).length === 0}>
+          <Button type="submit" busy={save.saving} disabled={!stepOk || Object.keys(body).length === 0}>
             Save the money rules
           </Button>
         </div>

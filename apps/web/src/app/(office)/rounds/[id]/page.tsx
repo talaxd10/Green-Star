@@ -215,7 +215,6 @@ export default function RoundPage() {
   const editable = !planned;
   const todayRate = rate.data?.rate?.iqdPer100Usd ?? null;
   const step = settings.data?.dinarRoundingIqd ?? 1000;
-  const errorLimit = settings.data?.errorMaxUsdCents ?? 0;
   const files = [...new Set(r.stopList.map((stop) => stop.shipmentCode))];
 
   const draftOf = (stop: RoundStop): Draft => drafts[stop.consignmentId] ?? fromStop(stop);
@@ -498,9 +497,9 @@ export default function RoundPage() {
                             Allow it
                           </button>
                         ) : null}
-                        {/* A few cents or dollars short, inside the Error limit: one click to the Error entry, filled in. */}
-                        {stop.missedCollection && !dirty && stop.remainingUsdCents > 0 && stop.remainingUsdCents <= errorLimit ? (
-                          <Link href={`/money?customer=${stop.customerId}&error=${stop.remainingUsdCents}`} className="ml-3 text-[13px] font-semibold text-green hover:underline">
+                        {/* He paid, but came up short: one click to the Error entry, filled in. */}
+                        {stop.missedCollection && !dirty && stop.remainingUsdCents > 0 && stop.payments.length > 0 ? (
+                          <Link href={`/money?customer=${stop.customerId}&error=${stop.remainingUsdCents}&consignment=${stop.consignmentId}`} className="ml-3 text-[13px] font-semibold text-green hover:underline">
                             {formatMoney(stop.remainingUsdCents, "USD")} short: enter as Error
                           </Link>
                         ) : null}

@@ -135,6 +135,8 @@ export interface Consignment {
   createdAt: string;
   lastRoundId: string | null;
   hasException: boolean;
+  /** What Error entries added to it, while they stand. Included in remaining. */
+  errorsAddedUsdCents: number;
 }
 
 export interface Dispute {
