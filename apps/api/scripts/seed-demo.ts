@@ -141,21 +141,33 @@ const result = (consignmentId: string, outcome: string, at: string, received?: {
 // -- Last week: a file that went out, was paid, counted in, and closed itself.
 const f1 = await file("GSSK6926", 6, [[rebwar, 12_400, 4, "Erbil"], [dara, 46_000, 11, "Sulaymaniyah"], [karzan, 7_500, 2, "Erbil"], [lana, 0, 1, "Erbil"]]);
 const r1 = await round(karwan, [[f1.by[rebwar] as string, 4], [f1.by[dara] as string, 11], [f1.by[karzan] as string, 2], [f1.by[lana] as string, 1]], 5);
+// Money for the road before Karwan left.
+const driverMoney = (driverId: string, body: object) => send("POST", `/v1/drivers/${driverId}/money`, body);
+await driverMoney(karwan, { what: "advance", amount: { amount: 500_000, currency: "IQD" }, roundId: r1, happenedAt: ago(5, 7), note: "For the Erbil round" });
 await send("PUT", `/v1/rounds/${r1}/results`, {
   results: [
-    result(f1.by[rebwar] as string, "paid", ago(5, 12), { amount: 12_400, currency: "USD" }),
+    // Rebwar owed $124.00 and paid $130.00; Karwan gave him 8,700 IQD back from his own account.
+    { ...result(f1.by[rebwar] as string, "paid", ago(5, 12), { amount: 13_000, currency: "USD" }), changeIqd: 8_700 },
     result(f1.by[dara] as string, "on_account", ago(5, 14)),
     result(f1.by[karzan] as string, "paid", ago(5, 15), { amount: 108_750, currency: "IQD" }),
     result(f1.by[lana] as string, "prepaid", ago(5, 16)),
   ],
 });
-await send("POST", `/v1/rounds/${r1}/hand-in`, { id: randomUUID(), happenedAt: ago(4, 10), usdNotes: { 10000: 1, 2000: 1, 200: 2 }, iqdNotes: { 50000: 2, 5000: 1, 1000: 3, 250: 3 } });
+await send("POST", `/v1/rounds/${r1}/hand-in`, { id: randomUUID(), happenedAt: ago(4, 10), usdNotes: { 10000: 1, 2000: 1, 1000: 1 }, iqdNotes: { 50000: 2, 5000: 1, 1000: 3, 250: 3 } });
+// His receipts from that round, and what he gave back.
+await driverMoney(karwan, { what: "expense", category: "fuel_car", amount: { amount: 45_000, currency: "IQD" }, roundId: r1, city: "Erbil", happenedAt: ago(4, 10) });
+await driverMoney(karwan, { what: "expense", category: "transport", amount: { amount: 75_000, currency: "IQD" }, roundId: r1, city: "Erbil", note: "Erbil transport company took 6 cartons", happenedAt: ago(4, 10) });
+await driverMoney(karwan, { what: "expense", category: "workers", amount: { amount: 15_000, currency: "IQD" }, roundId: r1, city: "Sulaymaniyah", happenedAt: ago(4, 10) });
+await driverMoney(karwan, { what: "return", amount: { amount: 300_000, currency: "IQD" }, happenedAt: ago(4, 11) });
 await send("POST", "/v1/payments", { customerId: dara, received: { amount: 30_000, currency: "USD" }, method: "fib", happenedAt: ago(3, 11), note: "FIB transfer, ref 88214" });
 
 // -- This week: the board's round 14. One paid in dinars, one held, one on account, one the driver forgot.
 const f2 = await file("GSSK6931", 3, [[rebwar, 8_500, 3, "Erbil"], [shvan, 4_000, 1, "Kirkuk"], [yaro, 128_000, 26, "Erbil"], [nasrin, 15_500, 5, "Duhok"]]);
 const f3 = await file("GSSK6934", 2, [[dara, 31_000, 8, "Sulaymaniyah"], [hemn, 6_200, 2, "Duhok"], [avin, 22_750, 6, "Erbil"], [soran, 9_800, 3, "Kirkuk"]]);
 const r2 = await round(karwan, [[f2.by[rebwar] as string, 3], [f2.by[shvan] as string, 1], [f3.by[dara] as string, 8], [f3.by[hemn] as string, 2], [f3.by[soran] as string, 2]], 1);
+await driverMoney(karwan, { what: "advance", amount: { amount: 250_000, currency: "IQD" }, roundId: r2, happenedAt: ago(1, 7) });
+await driverMoney(karwan, { what: "expense", category: "fuel_car", amount: { amount: 35_000, currency: "IQD" }, roundId: r2, city: "Kirkuk", happenedAt: ago(1, 18) });
+await driverMoney(karwan, { what: "expense", category: "car_parts", amount: { amount: 60_000, currency: "IQD" }, roundId: r2, city: "Kirkuk", note: "New tyre", happenedAt: ago(1, 18) });
 await send("PUT", `/v1/rounds/${r2}/results`, {
   results: [
     result(f2.by[rebwar] as string, "paid", ago(1, 13), { amount: 123_500, currency: "IQD" }),
