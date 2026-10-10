@@ -418,6 +418,7 @@ function CashOutForm() {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("USD");
   const [reason, setReason] = useState("");
+  const [city, setCity] = useState("");
   const out = useSave(
     (body: unknown, key: string) => api.post<CashOut>("/v1/cash-outs", body, key),
     (made) => {
@@ -437,7 +438,7 @@ function CashOutForm() {
       noValidate
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void out.save({ category, amount: { amount: typed, currency: used }, reason });
+        void out.save({ category, amount: { amount: typed, currency: used }, reason, ...(china || city.trim() === "" ? {} : { city: city.trim() }) });
       }}
     >
       <div className="grid grid-cols-2 gap-4">
@@ -456,9 +457,19 @@ function CashOutForm() {
           {(id) => <AmountBox id={id} amount={amount} currency={used} onAmount={setAmount} onCurrency={setCurrency} problem={bad ? "bad" : undefined} fixedCurrency={china} />}
         </Field>
       </div>
-      <Field label="Reason" problem={out.fieldProblem("reason")}>
-        {(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={china ? "Sent with Kak Azad's transfer" : "Fuel for the Kirkuk round"} />}
-      </Field>
+      <div className={china ? "" : "grid grid-cols-2 gap-4"}>
+        <Field label="Reason" problem={out.fieldProblem("reason")}>
+          {(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={china ? "Sent with Kak Azad's transfer" : "Fuel for the Kirkuk round"} />}
+        </Field>
+        {china ? null : (
+          <Field label="City" hint="Optional: for the delivery costs" problem={out.fieldProblem("city")}>
+            {(id) => <Input id={id} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Erbil" />}
+          </Field>
+        )}
+      </div>
+      <p className="text-[12px] text-muted">
+        What the driver spends from the money he was given is entered on <Link href="/customers" className="font-semibold text-green hover:underline">his account</Link>, not here.
+      </p>
       <Problem of={out.problem} />
       <div>
         <Button type="submit" tone="primary" busy={out.saving} disabled={typed === null || typed === 0 || reason.trim() === ""}>

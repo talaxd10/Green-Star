@@ -1,10 +1,11 @@
 "use client";
 
-import type { Consignment, Currency, RoundDetail, RoundMethod, RoundOutcome, RoundStop, Settings, Vault } from "@green-star/contracts";
-import { checkRoundResult } from "@green-star/domain";
+import type { Consignment, Currency, DriverAccountDetail, RoundDetail, RoundMethod, RoundOutcome, RoundStop, Settings, Vault } from "@green-star/contracts";
+import { changeCredit, checkRoundResult } from "@green-star/domain";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { holdsText } from "@/components/drivers";
 import { NoteCounter } from "@/components/note-counter";
 import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, ReadProblem, Select, Stat, Table, Td, Textarea, Th } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -23,6 +24,8 @@ interface PartDraft {
 interface Draft {
   outcome: RoundOutcome | "";
   parts: PartDraft[];
+  /** Dinars the driver gave back on the dollars, from his own account. Empty when none. */
+  change: string;
 }
 
 const MAX_PARTS = 4;
@@ -38,8 +41,10 @@ const PROBLEMS: Record<string, string> = {
 };
 
 function fromStop(stop: RoundStop): Draft {
+  const change = stop.payments.find((part) => part.changeIqd !== null)?.changeIqd ?? null;
   return {
     outcome: stop.outcome ?? "",
+    change: change === null ? "" : String(change),
     parts:
       stop.payments.length === 0
         ? [emptyPart()]
@@ -61,6 +66,47 @@ function outcomesFor(stop: RoundStop): RoundOutcome[] {
 }
 
 const takesMoney = (outcome: RoundOutcome | "") => outcome === "paid" || outcome === "on_account" || outcome === "unpaid";
+
+/** Dinars the driver gave back on dollars, from his own account: $500 for $490 of goods, 15,000 IQD back. */
+function ChangeBox({ stop, draft, driverName, rate, step, due, onChange }: { stop: RoundStop; draft: Draft; driverName: string; rate: number | null; step: number; due: number; onChange: (change: string) => void }) {
+  const [open, setOpen] = useState(draft.change !== "");
+  if (!open) {
+    return (
+      <button type="button" className="self-start text-[12px] font-semibold text-green hover:underline" aria-label={`${driverName} gave ${stop.customerName} change`} onClick={() => setOpen(true)}>
+        + gave change back in dinars
+      </button>
+    );
+  }
+  const change = draft.change.trim() === "" ? null : parseAmount(draft.change, "IQD");
+  const dollars = draft.parts.find((part) => part.currency === "USD" && part.method === "driver_cash");
+  const usd = dollars === undefined ? null : parseAmount(dollars.amount, "USD");
+  const worth = change !== null && change > 0 && usd !== null && usd > 0 && rate !== null ? Number(changeCredit(BigInt(usd), BigInt(change), rate, [BigInt(due)], BigInt(step))) : null;
+  return (
+    <div className="flex flex-col gap-1" data-change>
+      <div className="flex items-center gap-1.5">
+        <Input aria-label={`Change given back to ${stop.customerName}`} className="num h-9 w-28 text-right" inputMode="numeric" placeholder="15,000" value={draft.change} onChange={(e) => onChange(e.target.value)} />
+        <span className="text-[13px] text-muted">IQD back, from {driverName}&apos;s account</span>
+        <button
+          type="button"
+          className="px-1 text-[13px] text-muted hover:text-red"
+          aria-label={`No change for ${stop.customerName}`}
+          onClick={() => {
+            onChange("");
+            setOpen(false);
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      {worth !== null && usd !== null ? (
+        <span className={`num text-[12px] ${worth === due ? "text-green" : "text-muted"}`}>
+          {formatMoney(usd, "USD")} less {formatMoney(change as number, "IQD")} counts as {formatMoney(worth, "USD")}
+          {worth === due ? ": paid in full" : worth < due ? `, ${formatMoney(due - worth, "USD")} still owed` : `, ${formatMoney(worth - due, "USD")} over`}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 /** For a date-and-time box: now, in the computer's own time. */
 function nowLocal(): string {
@@ -200,6 +246,7 @@ export default function RoundPage() {
   const round = useGet<RoundDetail>(`/v1/rounds/${id}`);
   const rate = useRateToday();
   const settings = useGet<Settings>("/v1/settings");
+  const driverAccount = useGet<DriverAccountDetail>(round.data?.driverId ? `/v1/drivers/${round.data.driverId}/account` : null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [when, setWhen] = useState(nowLocal);
   const [doing, setDoing] = useState<{ kind: "exception" | "void"; stop: RoundStop } | { kind: "voidHandIn"; handInId: string } | { kind: "add" } | null>(null);
@@ -221,7 +268,10 @@ export default function RoundPage() {
   const edit = (stop: RoundStop, change: Partial<Draft>) =>
     setDrafts((current) => {
       const next = { ...(current[stop.consignmentId] ?? fromStop(stop)), ...change };
-      if (!takesMoney(next.outcome)) next.parts = [emptyPart()];
+      if (!takesMoney(next.outcome)) {
+        next.parts = [emptyPart()];
+        next.change = "";
+      }
       return { ...current, [stop.consignmentId]: next };
     });
   const editPart = (stop: RoundStop, index: number, change: Partial<PartDraft>) =>
@@ -244,6 +294,14 @@ export default function RoundPage() {
     if (unread !== undefined) return unread.currency === "IQD" ? "Dinars are whole numbers" : "That is not an amount";
     if (typed.some((part) => part.currency === "IQD") && todayRate === null) return "Set today's dinar rate first";
     if (new Set(typed.map((part) => `${part.currency} ${part.method}`)).size < typed.length) return PROBLEMS.payment_invalid as string;
+    if (draft.change.trim() !== "") {
+      const change = parseAmount(draft.change, "IQD");
+      const dollars = typed.find((part) => part.currency === "USD" && part.method === "driver_cash");
+      if (change === null || change <= 0) return "The change is a whole number of dinars";
+      if (dollars === undefined) return "Change is given back on dollars paid to the driver";
+      if (todayRate === null) return "Set today's dinar rate first";
+      if (changeCredit(BigInt(dollars.amount as number), BigInt(change), todayRate, []) <= 0n) return "The change is worth as much as the dollars";
+    }
     const first = typed[0];
     const problem = checkRoundResult({
       outcome: draft.outcome,
@@ -268,6 +326,7 @@ export default function RoundPage() {
     void saveResults.save({
       results: changed.map((stop) => {
         const [first, ...more] = typedParts(draftOf(stop)).map((part) => ({ received: { amount: part.amount, currency: part.currency }, method: part.method }));
+        const change = draftOf(stop).change.trim() === "" ? null : parseAmount(draftOf(stop).change, "IQD");
         return {
           id: crypto.randomUUID(),
           consignmentId: stop.consignmentId,
@@ -275,6 +334,7 @@ export default function RoundPage() {
           happenedAt,
           ...(first === undefined ? {} : first),
           ...(more.length === 0 ? {} : { more }),
+          ...(change === null ? {} : { changeIqd: change }),
         };
       }),
     });
@@ -312,6 +372,22 @@ export default function RoundPage() {
         ) : null}
       </PageHead>
       <Problem of={depart.problem ?? removeStop.problem} />
+
+      {r.driverId !== null && driverAccount.data !== undefined ? (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rule bg-surface px-5 py-3" data-testid="driver-account">
+          <p className="text-sm">
+            <b className="font-semibold" dir="auto">{driverAccount.data.name}</b> holds <span className="num">{holdsText(driverAccount.data)}</span> of the office&apos;s money for the road.
+          </p>
+          <span className="flex gap-4 text-[13px] font-semibold">
+            <Link href={`/drivers/${r.driverId}?round=${r.id}&what=${planned ? "advance" : "expense"}`} className="text-green hover:underline">
+              {planned ? "Give him money for this round" : "Enter his receipts"}
+            </Link>
+            <Link href={`/drivers/${r.driverId}`} className="text-muted hover:text-green hover:underline">
+              His account
+            </Link>
+          </span>
+        </div>
+      ) : null}
 
       {missed.length > 0 ? (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red bg-red-soft px-5 py-3.5 text-red" role="alert">
@@ -463,6 +539,17 @@ export default function RoundPage() {
                                 ) : null}
                               </>
                             ) : null}
+                            {r.driverId !== null && draft.parts.some((part) => part.currency === "USD" && part.method === "driver_cash") ? (
+                              <ChangeBox
+                                stop={stop}
+                                draft={draft}
+                                driverName={r.driverName ?? "the driver"}
+                                rate={todayRate}
+                                step={step}
+                                due={due}
+                                onChange={(change) => edit(stop, { change })}
+                              />
+                            ) : null}
                             {draft.parts.length < MAX_PARTS ? (
                               <button type="button" className="self-start text-[12px] font-semibold text-green hover:underline" aria-label={`${stop.customerName} also paid another way`} onClick={() => addPart(stop)}>
                                 + also paid another way
@@ -475,6 +562,11 @@ export default function RoundPage() {
                               <span key={index}>
                                 {formatMoney(paid.receivedAmount, paid.receivedCurrency)}
                                 {paid.receivedCurrency === "IQD" ? <span className="text-muted"> → {formatMoney(paid.creditedUsdCents, "USD")}</span> : null}
+                                {paid.changeIqd !== null ? (
+                                  <span className="text-muted">
+                                    , {formatMoney(paid.changeIqd, "IQD")} back → {formatMoney(paid.creditedUsdCents, "USD")}
+                                  </span>
+                                ) : null}
                                 {paid.method !== "driver_cash" ? <span className="ml-2 text-[12px] text-muted">{METHOD[paid.method]}</span> : null}
                               </span>
                             ))}

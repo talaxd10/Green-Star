@@ -12,8 +12,7 @@
 //   POST  /v1/disputes                   Open a dispute and mark it sent to China
 //   PATCH /v1/disputes/:id               Record China's answer and close it
 //
-// The Excel import (POST /v1/imports) is not here yet: it needs the real
-// China files. Until then a file is typed in by hand.
+// The Excel import is in imports.ts. A file can still be typed in by hand.
 
 import {
   CancelConsignmentRequest,
@@ -58,7 +57,18 @@ export async function shipmentDetail(q: Queryable, id: string): Promise<Shipment
     [id],
   );
   const disputes = await q.query(`${DISPUTES} where c.shipment_id = $1 order by d.created_at desc`, [id]);
-  return { ...toShipment(summary), consignmentList: consignments.map(toConsignment), disputes: disputes.map(toDispute) };
+  const source = await q.first<{ filename: string; rows: string; left_out: string }>(
+    `select f.filename, (select count(*) from shipment_lines l where l.shipment_id = s.id) as rows,
+            (select count(*) from shipment_lines l where l.shipment_id = s.id and l.consignment_id is null) as left_out
+     from shipments s join source_files f on f.id = s.source_file_id where s.id = $1`,
+    [id],
+  );
+  return {
+    ...toShipment(summary),
+    consignmentList: consignments.map(toConsignment),
+    disputes: disputes.map(toDispute),
+    sourceFile: source === undefined ? null : { filename: source.filename, rows: Number(source.rows), leftOut: Number(source.left_out) },
+  };
 }
 
 type DraftRows = z.infer<typeof DraftShipmentRequest>["consignments"];
@@ -129,8 +139,20 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
         throw new ApiError(422, "shipment_locked", "This file is confirmed. Cancel or correct a consignment instead.");
       }
       await q.query("update shipments set code = $2, arrived_on = $3 where id = $1", [id, body.code, body.arrivedOn ?? null]);
+      // An imported file's rows stay with the customer they went to.
+      const lines = await q.query<{ id: string; customer_id: string }>(
+        "select l.id, c.customer_id from shipment_lines l join consignments c on c.id = l.consignment_id where l.shipment_id = $1",
+        [id],
+      );
+      await q.query("update shipment_lines set consignment_id = null where shipment_id = $1", [id]);
       await q.query("delete from consignments where shipment_id = $1", [id]);
       await insertConsignments(q, id, body.consignments);
+      for (const line of lines) {
+        await q.query(
+          "update shipment_lines set consignment_id = (select c.id from consignments c where c.shipment_id = $2 and c.customer_id = $3) where id = $1",
+          [line.id, id, line.customer_id],
+        );
+      }
       return { body: await shipmentDetail(q, id) };
     });
   });

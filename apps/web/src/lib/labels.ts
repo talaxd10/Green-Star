@@ -77,8 +77,11 @@ export const METHOD: Record<PaymentMethod, string> = {
 
 export const CASH_OUT: Record<CashOutCategory, string> = {
   china: "Sent to China",
+  fuel_car: "Fuel",
+  car_parts: "Car parts and repairs",
+  workers: "Workers and loading",
+  transport: "Transport company between cities",
   driver_pay: "Driver pay",
-  fuel_car: "Fuel and car",
   customs_airport: "Customs and airport",
   rent_salaries: "Rent and salaries",
   other: "Other",
@@ -95,6 +98,9 @@ export const ENTRY: Record<EntryKind, string> = {
   currency_exchange: "Currency exchange",
   reversal: "Reversal",
   error_correction: "Error",
+  driver_advance: "Given to the driver",
+  driver_expense: "Driver's receipt",
+  driver_return: "Driver gave back",
 };
 
 /** What an alert is about, in two or three words. */

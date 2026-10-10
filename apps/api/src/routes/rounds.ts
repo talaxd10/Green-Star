@@ -256,7 +256,7 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
     return write(ctx, request, reply, async ({ q, auth }) => {
       // One transaction: every row is saved or none is.
       for (const row of rows) {
-        await q.query("select gs_enter_round_result($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)", [
+        await q.query("select gs_enter_round_result($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)", [
           row.id,
           id,
           row.consignmentId,
@@ -271,6 +271,8 @@ export async function roundRoutes(app: FastifyInstance): Promise<void> {
           row.more === undefined || row.more.length === 0
             ? null
             : JSON.stringify(row.more.map((part) => ({ amount: part.received.amount, currency: part.received.currency, method: part.method }))),
+          // Dinars the driver gave back on the dollars, from his own account.
+          row.changeIqd ?? null,
         ]);
       }
       return { body: await roundDetail(q, id) };

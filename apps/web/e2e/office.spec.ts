@@ -93,11 +93,21 @@ test("a file is typed in as a draft, then confirmed, which charges each customer
   await expect(page.getByRole("heading", { name: "GSSK6931" })).toBeVisible();
   await expect(page.getByText("Not confirmed yet")).toBeVisible();
 
+  // Shared out: Dara is trusted and it goes on his account, Rebwar pays before he gets his goods.
+  await expect(page.getByTestId("split-trusted")).toContainText("$310.00");
+  await expect(page.getByTestId("split-pay-first")).toContainText("$85.00");
   await page.getByRole("button", { name: "Confirm the file" }).click();
-  await expect(page.getByText("This charges 2 customers $395.00 in all")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Confirm the file" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("region", { name: "Trusted customers" })).toContainText("Dara M.");
+  await expect(dialog.getByRole("region", { name: "Trusted customers" })).toContainText("owes $0.00 → $310.00");
+  await expect(dialog.getByRole("region", { name: "Pay-first customers" })).toContainText("Rebwar A.");
+  await expect(dialog.getByRole("region", { name: "Pay-first customers" })).toContainText("to collect $85.00");
+  await expect(dialog.getByText("In all $395.00: trusted $310.00, pay first $85.00.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Confirm the file" }).click();
   await expect(page.getByText("Confirmed", { exact: true })).toBeVisible();
   await expect(page.getByText("2 not delivered")).toBeVisible();
+  await expect(page.getByTestId("split-trusted")).toContainText("On their account since the file was confirmed");
+  await expect(page.getByTestId("split-pay-first")).toContainText("Still to collect before they get their goods");
 });
 
 test("today's rate is set, and a typing mistake is caught before it is taken", async () => {
@@ -562,6 +572,98 @@ test("a stop that came up a little short is let go from the round with one click
   await expect(page.getByLabel("Amount received from Short Payer")).toHaveValue("89000");
   await expect(page.getByText("The driver forgot to collect.")).toHaveCount(0);
   await expect(page.getByRole("link", { name: /short: enter as Error/ })).toHaveCount(0);
+});
+
+test("a spreadsheet is imported: known customers are found, a new one is made, a bad row is left out", async () => {
+  const known = await send("POST", "/v1/customers", { name: "Kurdo Known", phones: ["0770 555 1212"] });
+  const csv = [
+    "GREEN STAR,,,",
+    "Mark,Customer,Phone,Collect USD",
+    ",Kurdo,0770 555 1212,62",
+    "NEWMARK 7,Shwan New,0750 111 2233,40.50",
+    "BAD,,,abc",
+    "Total,,,102.5",
+  ].join("\n");
+  await page.goto("/files");
+  await page.getByRole("link", { name: "Import from Excel" }).click();
+  await page.getByLabel("The spreadsheet").setInputFiles({ name: "GSSK8801 Sulaymaniyah.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(page.getByLabel("File code")).toHaveValue("GSSK8801");
+  await expect(page.getByLabel("Headings are on row")).toHaveValue("1");
+  await expect(page.getByLabel("To collect, $")).toHaveValue("3");
+  await expect(page.getByLabel("Whose goods on row 3")).toHaveValue("auto");
+  await expect(page.locator('[data-row="3"]')).toContainText("Kurdo Known, found by phone");
+  await expect(page.getByLabel("Whose goods on row 4")).toHaveValue("new");
+  await expect(page.getByLabel("New customer's name on row 4")).toHaveValue("Shwan New");
+  await expect(page.locator('[data-row="5"]')).toContainText('"abc" is not an amount in dollars');
+  await expect(page.getByText("3 rows · 1 found · 1 new customer · 1 left out")).toBeVisible();
+
+  await page.getByRole("button", { name: "Make the draft file" }).click();
+  await expect(page.getByRole("heading", { name: "GSSK8801" })).toBeVisible();
+  await expect(page.getByText("Draft", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /Kurdo Known/ })).toContainText("$62.00");
+  await expect(page.getByRole("row", { name: /Shwan New/ })).toContainText("$40.50");
+  await expect(page.getByText("Imported from GSSK8801 Sulaymaniyah.csv")).toBeVisible();
+
+  // The same spreadsheet again is caught before anything is made.
+  await page.goto("/files/import");
+  await page.getByLabel("The spreadsheet").setInputFiles({ name: "GSSK8801 Sulaymaniyah.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(page.getByText("This exact spreadsheet was already imported as")).toContainText("GSSK8801");
+  await expect(page.getByRole("button", { name: "Make the draft file" })).toBeDisabled();
+  expect(known.id).toBeTruthy();
+});
+
+test("the driver is given money for the round, gives change at a door from it, and his receipts are the delivery costs", async () => {
+  await page.goto("/today");
+  const { consignmentId } = await owing("Change Customer", 49_000, "GSSK7005");
+  const driver = await send("POST", "/v1/drivers", { name: "Kawa" });
+  const round = await send<{ id: string; number: number }>("POST", "/v1/rounds", { driverId: driver.id, stops: [{ consignmentId }] });
+
+  await page.goto(`/rounds/${round.id}`);
+  await expect(page.getByTestId("driver-account")).toContainText("Kawa holds nothing");
+  await page.getByRole("link", { name: "Give him money for this round" }).click();
+  await expect(page.getByRole("radio", { name: "Give him money" })).toBeChecked();
+  await page.getByLabel("Amount").fill("500,000");
+  await page.getByRole("button", { name: "Give it to him" }).click();
+  await expect(page.getByText("500,000 IQD given to Kawa")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Given to him/ })).toContainText("+500,000 IQD");
+
+  await page.goto(`/rounds/${round.id}`);
+  await page.getByRole("button", { name: "He has left" }).click();
+  await page.getByLabel("Outcome for Change Customer").selectOption("paid");
+  await page.getByLabel("Amount received from Change Customer").fill("500");
+  await page.getByRole("button", { name: "Kawa gave Change Customer change" }).click();
+  await page.getByLabel("Change given back to Change Customer").fill("15,000");
+  await expect(page.locator("[data-change]")).toContainText("$500.00 less 15,000 IQD counts as $490.00: paid in full");
+  await page.getByRole("button", { name: "Save the results" }).click();
+  await expect(page.getByLabel("Change given back to Change Customer")).toHaveValue("15000");
+  await expect(page.getByText("The driver forgot to collect.")).toHaveCount(0);
+  await expect(page.getByTestId("driver-account")).toContainText("Kawa holds 485,000 IQD");
+
+  // He is back: his receipt, with the city.
+  await page.getByRole("link", { name: "Enter his receipts" }).click();
+  await expect(page.getByRole("radio", { name: "A receipt he brought" })).toBeChecked();
+  await page.getByLabel("Amount").fill("75,000");
+  await page.getByLabel("What for").selectOption("transport");
+  await page.getByLabel("City").fill("Erbil");
+  await page.getByRole("button", { name: "Enter the receipt" }).click();
+  await expect(page.getByText("Receipt for 75,000 IQD entered")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Change at a door/ })).toContainText("Change Customer");
+  await expect(page.getByText("He holds, dinars").locator("..")).toContainText("410,000 IQD");
+
+  // His account is with the trusted customers' accounts.
+  await page.getByRole("link", { name: "Customers" }).click();
+  await page.getByRole("radio", { name: "Trusted" }).click();
+  await expect(page.getByRole("row", { name: /Kawa/ })).toContainText("410,000 IQD");
+
+  // What delivering cost, exactly.
+  await page.getByRole("link", { name: "Delivery costs" }).click();
+  await expect(page.getByRole("heading", { name: "Delivery costs" })).toBeVisible();
+  const byKind = page.locator("section").filter({ has: page.getByRole("heading", { name: "By kind" }) });
+  await expect(byKind.getByRole("row", { name: /Transport company between cities/ })).toContainText("75,000 IQD");
+  const byCity = page.locator("section").filter({ has: page.getByRole("heading", { name: "By city" }) });
+  await expect(byCity.getByRole("row", { name: /Erbil/ })).toContainText("$51.72");
+  const byRound = page.locator("section").filter({ has: page.getByRole("heading", { name: "By round" }) });
+  await expect(byRound.getByRole("row").filter({ has: page.getByRole("link", { name: String(round.number), exact: true }) })).toContainText("Kawa");
 });
 
 test("signed out, nothing opens: every screen asks him to sign in, and the API answers nobody", async () => {

@@ -84,6 +84,8 @@ const Result = z
     /** When the goods and money changed hands. A dinar amount converts at that day's rate. */
     happenedAt: Instant,
     note: Note.optional(),
+    /** Dinars the driver gave back from his own account, on dollars he took here: $500 for $490 of goods, 15,000 IQD back. */
+    changeIqd: z.number().int("Dinars are whole").positive("The change is more than zero").max(1e12).optional(),
   })
   .refine((row) => (row.received === undefined) === (row.method === undefined), {
     path: ["method"],
@@ -93,6 +95,14 @@ const Result = z
     path: ["more"],
     message: "The other payments need a first one",
   })
+  .refine(
+    (row) =>
+      row.changeIqd === undefined ||
+      [...(row.received === undefined || row.method === undefined ? [] : [{ received: row.received, method: row.method }]), ...(row.more ?? [])].some(
+        (part) => part.received.currency === "USD" && part.method === "driver_cash",
+      ),
+    { path: ["changeIqd"], message: "Change is given back on dollars paid to the driver" },
+  )
   .refine(
     (row) =>
       row.received === undefined || row.method === undefined || row.more === undefined
@@ -174,6 +184,8 @@ export interface RoundPayment {
   iqdPer100Usd: number | null;
   /** What it was worth on his account. For dinars that settled what he owed, that is what he owed. */
   creditedUsdCents: number;
+  /** Dinars the driver gave back on these dollars, from his own account. */
+  changeIqd: number | null;
 }
 
 export interface RoundStop {

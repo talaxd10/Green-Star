@@ -165,3 +165,16 @@ test("a rate far from the last one is a jump", () => {
   assert.equal(isRateJump(145000, 1450), true); // typed per dollar instead of per hundred
   assert.equal(isRateJump(145000, 1450000), true);
 });
+
+test("change given back in dinars: $500 less 15,000 IQD settles $490, near enough settles too, far does not", async () => {
+  const { changeCredit } = await import("../src/index.ts");
+  assert.equal(changeCredit(50000n, 15000n, 150000, [49000n]), 49000n);
+  // At 1,520, 15,000 IQD is $9.87: exactly $490.13, which settles $490.00.
+  assert.equal(changeCredit(50000n, 15000n, 152000, [49000n]), 49000n);
+  // $400 owed: it does not come near, so it is worth exactly what it is.
+  assert.equal(changeCredit(50000n, 15000n, 152000, [40000n]), 49013n);
+  // Nothing owed: exactly.
+  assert.equal(changeCredit(50000n, 15000n, 150000, [0n]), 49000n);
+  // The goods and everything he owes both near: the nearer.
+  assert.equal(changeCredit(50000n, 15000n, 152000, [49000n, 49010n]), 49010n);
+});

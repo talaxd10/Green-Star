@@ -137,6 +137,10 @@ export interface Consignment {
   hasException: boolean;
   /** What Error entries added to it, while they stand. Included in remaining. */
   errorsAddedUsdCents: number;
+  /** Trusted or pay first when the file was confirmed; as he is now while it is a draft. */
+  trustAtTime: Trust;
+  /** What the customer owes now on all his files, less credit. */
+  customerBalanceUsdCents: number;
 }
 
 export interface Dispute {
@@ -158,4 +162,6 @@ export interface Dispute {
 export interface ShipmentDetail extends ShipmentSummary {
   consignmentList: Consignment[];
   disputes: Dispute[];
+  /** The spreadsheet it was imported from, or null when it was typed in. */
+  sourceFile: { filename: string; rows: number; leftOut: number } | null;
 }

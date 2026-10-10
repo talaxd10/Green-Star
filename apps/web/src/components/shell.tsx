@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
   { href: "/files", label: "Files", icon: icons.files },
   { href: "/rounds", label: "Rounds", icon: icons.rounds },
   { href: "/money", label: "Money", icon: icons.money },
+  { href: "/costs", label: "Delivery costs", icon: icons.costs },
   { href: "/vault", label: "Vault close", icon: icons.vault },
   { href: "/china", label: "China account", icon: icons.china },
   { href: "/settings", label: "Settings", icon: icons.settings },

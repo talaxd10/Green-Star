@@ -96,6 +96,60 @@ What the database enforces:
 
 The two accounts (`dinar_rounding_usd`, `errors_usd`) are on `/v1/accounts` with everything else. `dinar_rounding` and `error_entries` are the views behind the screens. `consignment_details.errors_added_usd_cents` shows what Errors added to a consignment.
 
+**The Excel import** (October 2026)
+
+- `packages/db/migrations/0016_excel_import.sql`: the spreadsheet kept with the draft it made.
+- `packages/domain/src/imports.ts`: finding the header row, guessing each column from its heading, reading dollars, cartons and kilograms the way a spreadsheet writes them.
+- `apps/api/src/routes/imports.ts`: reading the file (SheetJS: .xlsx, .xls, .csv, .ods) and making the draft. `apps/web/src/app/(office)/files/import`: the screen.
+
+His words: "I just want the feature where you can import Excel files and it automatically adds it to the system, the customer accounts. He also wants to add them manually." The real China files have not arrived, so the import assumes no layout. It finds the row the headings are on (under a title or blank rows), guesses each column from its heading in English, Chinese, Arabic or Kurdish, and the CEO can change any guess; the rows are read again each time.
+
+Each row is matched to a customer the way the database always matched: phone, then exact mark, then the longest mark prefix. A row nobody matches becomes a new customer by default, with the row's name, phone and mark, so the next file finds him by himself; or the CEO picks who it is, or leaves the row out. A row the sheet got wrong (an amount that is not one, a phone that is not one) is left out, and says why. The total line is left out by itself.
+
+What it guarantees:
+
+1. Nothing is saved until "Make the draft file". The preview only reads.
+2. One customer's rows add up to one consignment: the amounts and the cartons. The city is his first row's.
+3. Every row is kept as the sheet had it (`shipment_lines.raw`), next to what was read and the consignment it went to; a row left out is kept too, saying so. The spreadsheet itself is kept with the draft, byte for byte (`source_file_contents`), until there is file storage.
+4. The same spreadsheet, by its sha256, is never imported twice. The preview says which file it already became.
+5. The draft charges nobody. It is checked, changed if need be, and confirmed like a file typed in by hand; changing its rows keeps each sheet row with its customer.
+
+**A file shared out: trusted and pay first** (October 2026)
+
+- `packages/db/migrations/0017_file_split.sql`, the file screen and its Confirm step.
+
+His words: "When a file arrives it distributes between trusted customers and non-trusted customers. Non-trusted customers have to pay or they don't get their item, and the trusted ones automatically in the file are counted as if they have paid. In the account tab they get -500, so 500 in debt, or if they had a balance, their balance -500. That's the way a file is handled, and after these steps you can call this file confirmed."
+
+That is what confirming has done since the start: one charge per customer, goods go on account only for a trusted customer, and a pay-first customer who gets his goods without paying is "the driver forgot to collect". What is new is that the screens show the split. Before confirming, each trusted customer's account now and after ("owes $0.00 → $310.00"), and each pay-first customer's amount to collect; after it, the file says what is on account and what is still to collect before the goods go out. Each consignment keeps whether its customer was trusted when the file was confirmed (`trust_at_time`), so the split stays as it was if his trust changes later.
+
+**The driver's account, his receipts and change at the door** (October 2026)
+
+- `packages/db/migrations/0018_driver_kinds.sql`, `0019_driver_account.sql`.
+- `apps/api/src/routes/drivers.ts`; the screens: a driver's page (`/drivers/:id`), the drivers' accounts on the Customers screen under Trusted, the round's page, and Money.
+
+His words: "Before he leaves San gives him 500,000 IQD for example. Then any money he spends for gas, car parts, workers, anything he spends on that, we want to have a driver account. Every time he leaves to deliver, add the money to his account; when he comes back with the receipts, San enters it." And: "A customer's goods are $490, he pays $500 to the driver, the driver pays the remaining $10 in IQD to him, for example 15,000 IQD. That 15,000 is also taken from the driver's account."
+
+Each driver has his own account per currency (`driver_float`): the office's money he holds for the road. It is not a round's cash; what he collects from customers is still counted in round by round.
+
+What the database enforces:
+
+1. Money reaches a driver's account only from the vault (`driver_advance`), and leaves it only as a receipt (`driver_expense`, with what kind), as change at a door, or back to the vault (`driver_return`). Nothing else can move it, by the application or by hand.
+2. A receipt says what kind it was: fuel, car parts and repairs, workers and loading, a transport company between cities, driver pay, or the office kinds. A city and the round it was for are optional, and are what make the delivery costs exact. A receipt is never edited; a wrong one is reversed and entered again.
+3. He can spend more than he holds. Then his account is below zero: the office owes him.
+4. Change at the door is part of the customer's payment, not an expense. A stop paid in dollars to the driver can say how many dinars he gave back (`changeIqd`). The customer is credited the dollars less the dinars at the day's rate, and the dinars come off the round driver's account in the same entry. When that comes to what he owes, give or take half the rounding step, it settles it and the cents are on the Dinar rounding account, as with dinars at the office. $500 less 15,000 IQD at 1,500 is $490.00; at 1,520 it is $490.13, which settles $490.00.
+5. Change is given only in dinars, on dollars paid to the driver, by the round's own driver (a round carried by a transport office has none), and is worth less than the dollars. Taking the result back puts the change back on his account.
+6. An expense paid from the vault (Money, Cash out) can say its city and round the same way (`gs_note_expense`, only while it is posted).
+
+**Delivery costs** (October 2026)
+
+- `packages/db/migrations/0020_delivery_costs.sql`; `GET /v1/reports/delivery-costs`; the Delivery costs screen.
+
+His words: "China have no idea about Sulaymaniyah's expenses. It's important to separate profit and expenses. They have an approximation but they cannot track it exactly. If we can do something that tells us the exact expenses... at a certain point if they see it's not too much, they can expand the delivery side of the business by buying a second car."
+
+Every expense is already in the ledger, paid from the vault or by the driver. `expense_lines` reads them all in one list: what kind, whether it is a cost of delivering (fuel, car parts, workers, transport between cities, driver pay), the city, the round, who paid it, and the amount in dollars at the rate of its day (the nearest day's when that day has none; the screen says which days). `delivered_goods` is every customer's goods handed over on a round, with the kilograms the file said. The report puts them side by side for any span: the delivery cost, the goods and kilograms delivered, the cost per customer's goods and per kilogram, by month, by kind, by city and by round. Nothing new is stored. A reversal is a negative line, the exact mirror in dollars too.
+
+What it does not do yet: profit. That needs what the office earns for delivering, which the files do not say yet.
+
 **Sign-in and the API** (build order step 1)
 
 - `packages/db/migrations/0005_users.sql`: users, passwords, sessions, sign-in tries, the audit log, and who may change what.
@@ -166,6 +220,8 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | POST, DELETE | `/v1/customers/:id/phones` | Add or remove a phone |
 | POST, DELETE | `/v1/customers/:id/marks` | Add or remove a mark or a mark prefix |
 | POST | `/v1/customers/:id/merge` | Merge a duplicate into this customer |
+| POST | `/v1/imports/preview` | Read a spreadsheet: sheets, header row, columns guessed, each row matched. Saves nothing |
+| POST | `/v1/imports` | Make the draft file from a spreadsheet, with who each unmatched row belongs to |
 | GET | `/v1/shipments` | Files by status |
 | POST | `/v1/shipments` | Type a file in by hand, as a draft |
 | GET | `/v1/shipments/:id` | Consignments, expected vs collected, what blocks closing |
@@ -178,12 +234,16 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | PATCH | `/v1/disputes/:id` | Record China's answer and close it |
 | GET, POST | `/v1/drivers`, `/v1/carriers` | Who carries the goods |
 | PATCH | `/v1/drivers/:id`, `/v1/carriers/:id` | Rename, switch off |
+| GET | `/v1/driver-accounts` | Every driver with the office's money he holds |
+| GET | `/v1/drivers/:id/account` | A driver's account, line by line |
+| POST | `/v1/drivers/:id/money` | Money given to him, a receipt with its kind, city and round, or money he gave back |
+| GET | `/v1/reports/delivery-costs` | Every expense in dollars, by month, kind, city and round, next to what was delivered. `?from=&to=` |
 | GET | `/v1/rounds` | Rounds, newest first |
 | POST | `/v1/rounds` | New round: driver or carrier, consignments from any files, carton counts |
 | GET | `/v1/rounds/:id` | Stops, outcomes, cash, hand-ins |
 | POST, DELETE | `/v1/rounds/:id/stops` | Put a consignment on the round, or take it off |
 | POST | `/v1/rounds/:id/depart` | The driver leaves |
-| PUT | `/v1/rounds/:id/results` | Outcome, amount, currency and method per customer |
+| PUT | `/v1/rounds/:id/results` | Outcome, amount, currency and method per customer; `changeIqd` for dinars given back on dollars |
 | POST | `/v1/round-results/:id/void` | Take a result back |
 | POST | `/v1/rounds/:id/hand-in` | Cash counted by denomination per currency |
 | POST | `/v1/hand-ins/:id/void` | Take a hand-in back |
@@ -193,7 +253,7 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | GET, POST | `/v1/payments` | Payments with how each was paid; an office or wallet payment |
 | POST | `/v1/payments/parts` | One visit paid in two to four ways: dollars and dinars, cash and a wallet. All saved or none |
 | GET, POST | `/v1/errors` | The CEO's Error entries; an amount off what a customer owes, or onto one of his consignments (`add`, `consignmentId`) |
-| GET, POST | `/v1/cash-outs` | Cash out of the vault: China, driver pay, fuel and car, customs and airport, rent and salaries, other |
+| GET, POST | `/v1/cash-outs` | Cash out of the vault: China, fuel, car parts, workers, transport between cities, driver pay, customs and airport, rent and salaries, other; with a city and round |
 | POST | `/v1/exchanges` | Dinars changed into dollars, or back |
 | GET | `/v1/vault` | What should be in the box, the notes, the last closes |
 | POST | `/v1/vault/close` | Daily count by denomination per currency |
@@ -296,7 +356,7 @@ What the screens enforce:
 9. Before Save, a payment shows what each part will be worth on his account, what is left, and for dinars the amount to ask for: "What is left is 192,850 IQD. Use 193,000." It is worked out by the same function the API posts with.
 10. A stop where he paid but came up short links straight to the Error entry, with the customer, the amount and the goods filled in. Money shows what rounding has given or taken and what was let go or added as errors, in all.
 
-`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry taken off and another added to his file, a stop on a round paid to the driver in two currencies and counted in, a stop 62 cents short let go from the round with one click, and, signed out, every screen and address refusing to open.
+`pnpm --filter @green-star/web e2e` runs a day at the office in a real browser against the real API and a real Postgres: a wrong password, two customers, a file typed in and confirmed, the rate, a round out and back, the cash counted in, a payment at the office, the vault close, the China account, a missed collection showing on Today and being resolved with a note, a wallet checked against its app, a statement made, drawn and marked as sent, the checks being set, a second device signed in and signed out from the first, a payment in dollars and rounded dinars, an Error entry taken off and another added to his file, a stop on a round paid to the driver in two currencies and counted in, a stop 62 cents short let go from the round with one click, a spreadsheet imported with a known customer, a new one and a bad row, a driver given money for a round who gives change at a door and brings back a receipt that shows in the delivery costs, and, signed out, every screen and address refusing to open.
 
 ## Run it
 
@@ -402,7 +462,9 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **One role, not three.** The board has the CEO, the owner (sees everything, changes nothing) and the office monitor (a screen with chosen widgets, no money). The CEO then said the system is his alone, so the other two were taken out everywhere: no such account can be made, the address and the screen for the monitor are gone, and nothing in the API or the screens asks what an account may do. In the database the `role` column stays, held to `ceo` by a constraint, because every row that says who did something points at a user. Both roles are in the git history before `0010_only_the_ceo.sql` if he wants one back.
 - **No shadcn/ui.** The screens use a small set of components written here (`apps/web/src/components/ui.tsx`), styled with Tailwind. It is about fifteen pieces, and they give the app its own look.
 - **Fonts are served by the app itself** (Archivo and IBM Plex Mono, the same as the plan boards), not fetched from Google, so the screens look the same with a slow connection.
-- **A file can be typed in by hand** (`POST /v1/shipments`). The board only has the Excel import, which waits on the real China files. Typing a file in is what makes the rest usable before then, and stays useful for a file the import cannot read.
+- **A file can be typed in by hand** (`POST /v1/shipments`), as well as imported. The board only has the import. The CEO wants both.
+- **The import reads any layout.** The board's import is built for the China files' columns. Those have not arrived, so the columns are guessed and confirmed by the CEO. When the real files come, the guesses can be made exact for them.
+- **The spreadsheet is kept in the database,** not in file storage, which is not set up yet. A file is at most 10 MB.
 - **A payment at the office can name the consignment it is for** (`forConsignmentId`). Left out, it pays the oldest first, as the board says. It is there for the customer who comes in to pay for goods held in the car while an older file is still on his account.
 - **Merging a duplicate customer does not move money.** It works while the duplicate has nothing on the books. One that already has a charge or a payment is fixed the way every money mistake is: reversed and entered again under the right customer.
 - **Extra addresses the board does not list**, because the screens need them: phones, drivers, carriers, stops, taking a result, a hand-in or a vault close back, cancelling and correcting a consignment, and the read side of payments, cash outs, the vault and the accounts.
@@ -423,6 +485,8 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **More alerts than the board's table:** a wallet gap, a dinar payment at a rate the day no longer has, and the ledger's own health check.
 - **The worker is a timer, not pg-boss.** There is nothing to queue yet. A queue comes with the Excel import, which is the first job that takes long and can fail halfway.
 - **The vault reminder waits for cash to move.** The board reminds at closing time every day. Here it reminds only when cash moved since the last count, and keeps reminding on the following days until the vault is counted.
+- **A driver has his own account,** which the board does not have: the money for the road, his receipts, and the change he gives at doors. The board only has a round's cash.
+- **More kinds of expense than the board's:** fuel, car parts and repairs, workers and loading, and a transport company between cities are each their own, because the delivery costs are counted by kind. The board's "Fuel and car" is now "Fuel".
 - **The carton check is not tied to creating a round.** Whenever the count differs from the file there is an alert, and it goes when a "missing" dispute is opened.
 
 ## Confirmed by the CEO
@@ -468,4 +532,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The Excel import and its screen (`/v1/imports`, waiting on the real China files) and the file check that runs on each import, receipts and photos (`/v1/attachments`, which needs the file storage set up), the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.
+The file check that runs on each import (it needs the real China files' columns), receipts and photos (`/v1/attachments`, which needs the file storage set up), the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.

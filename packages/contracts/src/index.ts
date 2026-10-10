@@ -6,6 +6,8 @@ export * from "./errors.ts";
 export * from "./auth.ts";
 export * from "./customers.ts";
 export * from "./shipments.ts";
+export * from "./imports.ts";
+export * from "./drivers.ts";
 export * from "./rounds.ts";
 export * from "./money.ts";
 export * from "./alerts.ts";

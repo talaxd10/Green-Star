@@ -37,6 +37,7 @@ export default function FilesPage() {
   return (
     <>
       <PageHead title="Files" hint="Each file from China, what it should bring in, what has come in, and what stops it closing. A file closes by itself.">
+        <LinkButton href="/files/import">Import from Excel</LinkButton>
         <LinkButton tone="primary" href="/files/new">
           Type a file in
         </LinkButton>

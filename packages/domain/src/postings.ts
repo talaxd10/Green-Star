@@ -20,13 +20,16 @@ export type EntryKind =
 
 export type Wallet = "fib" | "fastpay" | "zaincash";
 
-export type ExpenseCategory = "driver_pay" | "fuel_car" | "customs_airport" | "rent_salaries" | "other";
+export type ExpenseCategory = "fuel_car" | "car_parts" | "workers" | "transport" | "driver_pay" | "customs_airport" | "rent_salaries" | "other";
 
 export const WALLETS: readonly Wallet[] = ["fib", "fastpay", "zaincash"];
 
 export const EXPENSE_CATEGORIES: readonly ExpenseCategory[] = [
-  "driver_pay",
   "fuel_car",
+  "car_parts",
+  "workers",
+  "transport",
+  "driver_pay",
   "customs_airport",
   "rent_salaries",
   "other",

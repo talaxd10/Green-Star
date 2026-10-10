@@ -374,6 +374,8 @@ export async function moneyRoutes(app: FastifyInstance): Promise<void> {
           ? { ...sentToChina({ amountUsdCents: amount.amount }), reason: body.reason }
           : cashOut({ category: body.category, amount, reason: body.reason });
       const entryId = await postEntry(q, draft, { happenedAt: at, createdBy: auth.user.id, key: `api:${key}` });
+      // An expense says what it was for, so the delivery costs can be counted exactly.
+      if (body.category !== "china") await q.query("select gs_note_expense($1, $2, $3)", [entryId, body.roundId ?? null, body.city ?? null]);
       const row = await q.first("select entry_id, happened_at, day, category, amount, currency, reason, reversed from cash_outs where entry_id = $1", [entryId]);
       return { status: 201, body: toCashOut(row as Row) };
     });

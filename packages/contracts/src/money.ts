@@ -12,7 +12,7 @@ export const PAYMENT_METHODS = ["driver_cash", ...OFFICE_METHODS] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 /** Where cash leaves the vault to. His exact list, plus money sent to China. */
-export const CASH_OUT_CATEGORIES = ["china", "driver_pay", "fuel_car", "customs_airport", "rent_salaries", "other"] as const;
+export const CASH_OUT_CATEGORIES = ["china", "fuel_car", "car_parts", "workers", "transport", "driver_pay", "customs_airport", "rent_salaries", "other"] as const;
 export type CashOutCategory = (typeof CASH_OUT_CATEGORIES)[number];
 
 export const ENTRY_KINDS = [
@@ -26,10 +26,13 @@ export const ENTRY_KINDS = [
   "currency_exchange",
   "reversal",
   "error_correction",
+  "driver_advance",
+  "driver_expense",
+  "driver_return",
 ] as const;
 export type EntryKind = (typeof ENTRY_KINDS)[number];
 
-export const ACCOUNT_KINDS = ["customer", "driver_cash", "vault", "wallet", "china_payable", "expense", "exchange_clearing", "adjustment"] as const;
+export const ACCOUNT_KINDS = ["customer", "driver_cash", "vault", "wallet", "china_payable", "expense", "exchange_clearing", "adjustment", "driver_float"] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 /** "today", or a Baghdad day: the rate that applies is the rate of the day the money moved. */
@@ -122,6 +125,9 @@ export const NewCashOutRequest = z
     amount: Money,
     reason: Reason,
     happenedAt: Instant.optional(),
+    /** For the delivery costs: the round it was for, and the city. */
+    roundId: Uuid.optional(),
+    city: z.string().trim().min(1).max(80).optional(),
   })
   .refine((body) => body.category !== "china" || body.amount.currency === "USD", {
     path: ["amount", "currency"],

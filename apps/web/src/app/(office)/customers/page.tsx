@@ -4,6 +4,7 @@ import type { CustomerDetail, CustomerSummary } from "@green-star/contracts";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { DriverAccountsCard } from "@/components/drivers";
 import { Button, Card, Chip, Dialog, Empty, Field, FormActions, Input, LimitBar, Loading, Money, PageHead, Problem, ReadProblem, Segmented, Select, Table, Td, Th } from "@/components/ui";
 import { api, withQuery } from "@/lib/api";
 import { useDebounced, usePages, useSave } from "@/lib/hooks";
@@ -97,6 +98,8 @@ export default function CustomersPage() {
         <Input className="max-w-sm" type="search" placeholder="Phone, mark or name" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search customers" />
         <Segmented label="Which customers" value={show} onChange={setShow} options={SHOW} />
       </div>
+
+      {show === "trusted" ? <DriverAccountsCard /> : null}
 
       <Card>
         {list.error ? (

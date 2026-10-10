@@ -97,6 +97,7 @@ export function balances(): Map<string, bigint> {
   const out = app(
     `select coalesce(a.code,
               case a.kind when 'customer' then 'customer:' || a.customer_id
+                          when 'driver_float' then 'float:' || a.driver_id || ':' || a.currency
                           else 'driver:' || a.round_id || ':' || a.currency end)
             || '=' || coalesce(b.balance, 0)
      from accounts a left join account_balances b on b.account_id = a.id;`,
@@ -164,6 +165,8 @@ export interface ResultInput {
   received?: { amount: bigint | number; currency: "USD" | "IQD"; method?: Method };
   /** The rest of what he handed over, when he paid in more than one way. */
   more?: readonly { amount: bigint | number; currency: string; method?: string }[];
+  /** Dinars the driver gave back on dollars, from his own account. */
+  change?: bigint | number;
   at?: Date;
   id?: string;
 }
@@ -173,10 +176,11 @@ export function resultSql(input: ResultInput): string {
   const money = input.received
     ? `${input.received.amount}, ${lit(input.received.currency)}, ${lit(input.received.method ?? "driver_cash")}`
     : "null, null, null";
-  const more =
+  const moreJson =
     input.more === undefined
-      ? ""
-      : `, null, ${lit(JSON.stringify(input.more.map((part) => ({ amount: Number(part.amount), currency: part.currency, method: part.method ?? "driver_cash" }))))}::jsonb`;
+      ? "null"
+      : `${lit(JSON.stringify(input.more.map((part) => ({ amount: Number(part.amount), currency: part.currency, method: part.method ?? "driver_cash" }))))}::jsonb`;
+  const more = input.more === undefined && input.change === undefined ? "" : `, null, ${moreJson}${input.change === undefined ? "" : `, ${input.change}`}`;
   return `select gs_enter_round_result(${lit(input.id ?? randomUUID())}, ${lit(input.roundId)}, ${lit(input.consignmentId)}, ${lit(input.outcome)}, ${lit(USER)}, ${lit(at.toISOString())}, ${money}${more});`;
 }
 

@@ -11,6 +11,11 @@ function Icon({ children }: { children: ReactNode }) {
 }
 
 export const icons = {
+  costs: (
+    <Icon>
+      <path d="M3 16.5h14M5.5 13.5V9M10 13.5V5M14.5 13.5v-6" />
+    </Icon>
+  ),
   today: (
     <Icon>
       <rect x="3" y="4" width="14" height="13" rx="2" />

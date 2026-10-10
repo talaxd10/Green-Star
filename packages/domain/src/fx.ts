@@ -110,3 +110,23 @@ export function isRateJump(lastRatePer100: number, newRatePer100: number): boole
   assertRate(newRatePer100);
   return Math.abs(newRatePer100 - lastRatePer100) * 5 > lastRatePer100;
 }
+
+/**
+ * What dollars handed to the driver are worth when he gave dinars back from
+ * his own account: the dollars less the dinars at the day's rate. When that
+ * comes to what is owed, give or take half the rounding step (counted in
+ * dinars), it settles it; the goods first, then everything, the nearer one
+ * when both. The database works it out the same way (gs_change_credit).
+ */
+export function changeCredit(usdCents: bigint, changeIqd: bigint, ratePer100: number, owedUsdCents: readonly bigint[], stepIqd: bigint = DINAR_ROUNDING_IQD): bigint {
+  assertRate(ratePer100);
+  const exact = usdCents - iqdToUsdCents(changeIqd, ratePer100);
+  let best: { owed: bigint; off: bigint } | null = null;
+  for (const owed of owedUsdCents) {
+    if (owed <= 0n) continue;
+    const off = exact > owed ? exact - owed : owed - exact;
+    if (2n * usdCentsToIqd(off, ratePer100) > stepIqd) continue;
+    if (best === null || off < best.off || (off === best.off && owed > best.owed)) best = { owed, off };
+  }
+  return best === null ? exact : best.owed;
+}
