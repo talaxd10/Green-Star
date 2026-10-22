@@ -40,7 +40,9 @@ if (existing.rows[0].n > 0) {
 }
 
 // The first CEO, the way create-ceo makes him.
-const ceo = await owner.query<{ id: string }>("insert into users (name, role, phone) values ('Sarkar', 'ceo', '+9647700000001') returning id");
+// DEMO_CEO_NAME names him, for showing the office to the real CEO.
+const ceoName = process.env.DEMO_CEO_NAME?.trim() || "Sarkar";
+const ceo = await owner.query<{ id: string }>("insert into users (name, role, phone) values ($1, 'ceo', '+9647700000001') returning id", [ceoName]);
 await owner.query("insert into user_credentials (user_id, password_hash) values ($1, $2)", [
   (ceo.rows[0] as { id: string }).id,
   await hashPassword(DEMO_PASSWORD, SCRYPT_COST),

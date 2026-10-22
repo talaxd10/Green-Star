@@ -400,6 +400,10 @@ Statements are drawn with Chromium, and so is the end-to-end test. Install it on
 
 `pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
+### On a Windows PC, to show it
+
+Install Node.js 22 and PostgreSQL 16 (keep the defaults, remember the postgres password). Put this folder somewhere short, like `C:\green-star`. Double-click `setup.cmd` once, with internet: it makes the two database logins, installs the packages, fills the demo office (the CEO is named San) and builds the app. Then `start.cmd` opens it at `http://localhost:3000`; sign in with `0770 000 0001` and `greenstar-demo`. `reset-demo.cmd` puts the demo back with today's dates.
+
 ## No wallets, and starting balances (22 October)
 
 Tala: "Remove FastPay and ZainCash", "remove wallet systems at all for now: it should be just like adding normal money and then selecting how the money was paid", and "Starting balances: San wants to add them manually. We want to track it from now."
