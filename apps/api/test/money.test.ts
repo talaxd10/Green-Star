@@ -134,6 +134,19 @@ test("a FIB payment goes to FIB's account and never through the vault; FastPay a
   assert.equal(await s.balance(a), 0);
 });
 
+test("FastPay and ZainCash are not taken at the door either", async () => {
+  const a = await s.customer();
+  const file = await s.file([[a, 10_000]]);
+  const round = await s.roundOut([file.by[a] as string]);
+  for (const method of ["fastpay", "zaincash"]) {
+    const refused = await s.send("PUT", `/v1/rounds/${round}/results`, { results: [result(file.by[a] as string, "paid", { amount: 10_000, currency: "USD" }, method)] });
+    assert.equal(refused.status, 400, method);
+  }
+  const fib = await s.send("PUT", `/v1/rounds/${round}/results`, { results: [result(file.by[a] as string, "paid", { amount: 10_000, currency: "USD" }, "fib")] });
+  assert.equal(fib.status, 200, JSON.stringify(fib.body));
+  assert.equal(await s.balance(a), 0);
+});
+
 test("a payment is checked before it is posted", async () => {
   const a = await s.customer();
   await s.file([[a, 5_000]]);

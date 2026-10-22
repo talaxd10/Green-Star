@@ -55,6 +55,16 @@ test("a credit he had pays his next file", () => {
   assert.equal(health(), "");
 });
 
+test("money he paid before his starting debt was typed in pays it", () => {
+  const customer = newCustomer("Paid Ahead");
+  post(officePayment({ customerId: customer, received: usd(10000n) }), at(2));
+  assert.equal(customerBalance(customer), -10000n);
+  start("customer", 50000n, customer);
+  assert.equal(customerBalance(customer), 40000n);
+  assert.equal(remaining(startingConsignment(customer)), 40000n);
+  assert.equal(health(), "");
+});
+
 test("typing one again replaces it, the same request again changes nothing, and 0 clears it", () => {
   const customer = newCustomer("Typed Again");
   const account = `gs_customer_account(${lit(customer)})`;
