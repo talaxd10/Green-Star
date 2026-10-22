@@ -48,7 +48,12 @@ function fromStop(stop: RoundStop): Draft {
     parts:
       stop.payments.length === 0
         ? [emptyPart()]
-        : stop.payments.map((part) => ({ amount: amountForInput(part.receivedAmount, part.receivedCurrency), currency: part.receivedCurrency, method: part.method })),
+        : stop.payments.map((part) => ({
+            amount: amountForInput(part.receivedAmount, part.receivedCurrency),
+            currency: part.receivedCurrency,
+            // FastPay and ZainCash are no longer taken; an old one is changed only if he saves it again.
+            method: part.method === "driver_cash" ? "driver_cash" : "fib",
+          })),
   };
 }
 
@@ -493,7 +498,7 @@ export default function RoundPage() {
                                   <option value="IQD">IQD</option>
                                 </Select>
                                 <Select aria-label={index === 0 ? "How it was paid" : `How payment ${index + 1} was paid`} className="h-9 w-[168px]" value={part.method} onChange={(e) => editPart(stop, index, { method: e.target.value as RoundMethod })}>
-                                  {(["driver_cash", "fib", "fastpay", "zaincash"] as const).map((method) => (
+                                  {(["driver_cash", "fib"] as const).map((method) => (
                                     <option key={method} value={method}>
                                       {METHOD[method]}
                                     </option>

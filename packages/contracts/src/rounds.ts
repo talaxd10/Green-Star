@@ -13,9 +13,11 @@ export type RoundStatus = (typeof ROUND_STATUSES)[number];
 export const ROUND_OUTCOMES = ["paid", "on_account", "prepaid", "held", "unpaid"] as const;
 export type RoundOutcome = (typeof ROUND_OUTCOMES)[number];
 
-/** How money can be taken on a round. Cash at the office is not one of them. */
-export const ROUND_METHODS = ["driver_cash", "fib", "fastpay", "zaincash"] as const;
+/** How money can be taken on a round: the driver's cash or FIB. */
+export const ROUND_METHODS = ["driver_cash", "fib"] as const;
 export type RoundMethod = (typeof ROUND_METHODS)[number];
+/** What an old result may show: FastPay and ZainCash were taken until 22 October 2026. */
+export type RoundMethodSeen = RoundMethod | "fastpay" | "zaincash";
 
 export const CARRIER_KINDS = ["own_car", "transport_office"] as const;
 export type CarrierKind = (typeof CARRIER_KINDS)[number];
@@ -180,7 +182,7 @@ export interface RoundSummary {
 export interface RoundPayment {
   receivedAmount: number;
   receivedCurrency: Currency;
-  method: RoundMethod;
+  method: RoundMethodSeen;
   iqdPer100Usd: number | null;
   /** What it was worth on his account. For dinars that settled what he owed, that is what he owed. */
   creditedUsdCents: number;
@@ -206,7 +208,7 @@ export interface RoundStop {
   outcome: RoundOutcome | null;
   receivedAmount: number | null;
   receivedCurrency: Currency | null;
-  method: RoundMethod | null;
+  method: RoundMethodSeen | null;
   iqdPer100Usd: number | null;
   creditedUsdCents: number | null;
   /** Every part of what he handed over, in the order it was applied. The fields above are the first. */

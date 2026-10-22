@@ -111,18 +111,25 @@ test("dinars convert at the rate of the day the money moved, to the cent", async
   assert.equal(await s.balance(a), 1_500);
 });
 
-test("a wallet payment goes to that wallet's account and never through the vault", async () => {
+test("a FIB payment goes to FIB's account and never through the vault; FastPay and ZainCash are not taken", async () => {
   const a = await s.customer();
   await s.file([[a, 10_000]]);
-  const before = { vault: await s.account("vault_usd"), fib: await s.account("wallet_fib_usd"), zain: await s.account("wallet_zaincash_iqd") };
+  const before = { vault: await s.account("vault_usd"), fib: await s.account("wallet_fib_usd"), fibIqd: await s.account("wallet_fib_iqd"), zain: await s.account("wallet_zaincash_iqd") };
 
   const fib = await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 4_000, currency: "USD" }, method: "fib" });
   assert.deepEqual([fib.body.method, fib.body.kind], ["fib", "wallet_payment"]);
-  const zain = await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 87_000, currency: "IQD" }, method: "zaincash" });
-  assert.equal(zain.body.creditedUsdCents, 6_000);
+  for (const method of ["zaincash", "fastpay"]) {
+    const refused = await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 87_000, currency: "IQD" }, method });
+    assert.equal(refused.status, 400, method);
+    const parts = await s.send("POST", "/v1/payments/parts", { customerId: a, parts: [{ received: { amount: 87_000, currency: "IQD" }, method }] });
+    assert.equal(parts.status, 400, `${method} in parts`);
+  }
+  const dinars = await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 87_000, currency: "IQD" }, method: "fib" });
+  assert.equal(dinars.body.creditedUsdCents, 6_000);
 
   assert.equal((await s.account("wallet_fib_usd")) - before.fib, 4_000);
-  assert.equal((await s.account("wallet_zaincash_iqd")) - before.zain, 87_000);
+  assert.equal((await s.account("wallet_fib_iqd")) - before.fibIqd, 87_000);
+  assert.equal(await s.account("wallet_zaincash_iqd"), before.zain);
   assert.equal(await s.account("vault_usd"), before.vault);
   assert.equal(await s.balance(a), 0);
 });
@@ -385,13 +392,13 @@ test("the vault is closed by counting it; a gap needs a note; a wrong count is t
 test("payments are listed with how each was paid, and every money screen answers", async () => {
   const a = await s.customer(unique("Payer "));
   await s.file([[a, 9_000]]);
-  await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 1_000, currency: "USD" }, method: "fastpay" });
+  await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 1_000, currency: "USD" }, method: "fib" });
   await s.send("POST", "/v1/payments", { customerId: a, received: { amount: 14_500, currency: "IQD" }, method: "office_cash" });
 
   const list = (await s.get(`/v1/payments?customerId=${a}`)).body.items;
   assert.deepEqual(list.map((p: Record<string, unknown>) => [p.method, p.receivedAmount, p.receivedCurrency, p.creditedUsdCents]), [
     ["office_cash", 14_500, "IQD", 1_000],
-    ["fastpay", 1_000, "USD", 1_000],
+    ["fib", 1_000, "USD", 1_000],
   ]);
   assert.match(list[0].customerName, /^PAYER /);
   assert.deepEqual(list.map((p: { roundId: string | null }) => p.roundId), [null, null], "paid at the office, not on a round");

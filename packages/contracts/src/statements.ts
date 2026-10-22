@@ -13,7 +13,7 @@ export interface StatementLine {
   day: string;
   happenedAt: string;
   /** A charge from a file, a payment, or an Error entry: an amount taken off with no money arriving. */
-  kind: "charge" | "payment" | "correction";
+  kind: "charge" | "payment" | "correction" | "opening";
   /** True for a line that takes an earlier one back. Only seen when corrections are asked for. */
   isReversal: boolean;
   /** True for an entry that was taken back, and for the line that took it back. */

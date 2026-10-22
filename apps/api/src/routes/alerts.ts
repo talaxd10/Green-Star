@@ -1,12 +1,10 @@
-// Checks and alerts, the Today screen, the wallet check and the office settings.
+// Checks and alerts, the Today screen and the office settings.
 //
 //   GET  /v1/alerts              Open alerts, newest first (or resolved, or cleared)
 //   GET  /v1/alerts/count        How many are open, for the badge in the menu
 //   POST /v1/alerts/:id/resolve  Close an alert with a note
 //   GET  /v1/reports/today       Expected vs collected vs counted, per currency
-//   GET  /v1/wallets             Each wallet: the books, what its app should show, the last checks
-//   POST /v1/wallets/checks      What the wallet's app shows, typed in and compared
-//   GET  /v1/settings            Held-in-car days, close time, wallet days, the dinar rounding step
+//   GET  /v1/settings            Held-in-car days, close time, the dinar rounding step
 //   PUT  /v1/settings            Change them
 //
 // The alerts themselves are not made here. After every save the API asks the
@@ -18,7 +16,6 @@ import {
   IdParams,
   ResolveAlertRequest,
   SettingsRequest,
-  WalletCheckRequest,
   type Alert,
   type AlertCount,
   type Page,
@@ -28,15 +25,12 @@ import {
   type TodayCash,
   type TodayFile,
   type TodayReport,
-  type Wallet,
-  type WalletCheck,
-  type Wallets,
 } from "@green-star/contracts";
 import { baghdadDay } from "@green-star/domain";
 import type { FastifyInstance } from "fastify";
 import type { Queryable, Row } from "../db.ts";
 import { notFound, parse } from "../errors.ts";
-import { camel, happened, pager, read, write } from "../http.ts";
+import { camel, pager, read, write } from "../http.ts";
 
 const ALERT_COLUMNS = `
   a.id, a.kind, a.severity, a.status, a.title, a.active as still_wrong,
@@ -102,7 +96,8 @@ async function today(q: Queryable): Promise<TodayReport> {
   const files = await q.query(
     `select shipment_id, code, status, consignments, not_delivered, delivered_not_paid, waiting_for_hand_in, disputes_waiting,
             expected_usd_cents, collected_usd_cents
-     from shipment_overview where status <> 'closed' order by created_at desc, shipment_id limit 50`,
+     from shipment_overview o where status <> 'closed' and not exists (select 1 from shipments s where s.id = o.shipment_id and s.opening)
+     order by created_at desc, shipment_id limit 50`,
   );
   const held = await q.value<number>("select count(*) from held_in_car");
 
@@ -119,22 +114,6 @@ async function today(q: Queryable): Promise<TodayReport> {
     files: files.map((row) => camel<TodayFile>(row, { shipment_id: "id" })),
     heldInCar: held,
   };
-}
-
-async function wallets(q: Queryable): Promise<Wallets> {
-  const rows = await q.query(
-    `select w.code, w.name, w.method, w.currency, w.ledger_balance, w.expected_in_app,
-            w.last_checked_at, w.last_difference, w.unchecked_since,
-            (w.unchecked_since is not null
-             and now() - w.unchecked_since >= make_interval(days => (select wallet_check_days from settings))) as check_due
-     from wallet_status w order by w.code`,
-  );
-  const checks = await q.query(
-    `select c.id, a.code, a.name, c.currency, c.app_balance, c.expected, c.difference, c.note, c.checked_at, u.name as checked_by_name
-     from wallet_checks c join accounts a on a.id = c.account_id join users u on u.id = c.checked_by
-     order by c.created_at desc, c.id limit 30`,
-  );
-  return { wallets: rows.map((row) => camel<Wallet>(row)), checks: checks.map((row) => camel<WalletCheck>(row)) };
 }
 
 async function settings(q: Queryable): Promise<Settings> {
@@ -183,19 +162,6 @@ export async function alertRoutes(app: FastifyInstance): Promise<void> {
   // -- Today ----------------------------------------------------------------
 
   app.get("/reports/today", { config: { access: "signed_in" } }, async (): Promise<TodayReport> => read(ctx, today));
-
-  // -- Wallets --------------------------------------------------------------
-
-  app.get("/wallets", { config: { access: "signed_in" } }, async (): Promise<Wallets> => read(ctx, wallets));
-
-  app.post("/wallets/checks", { config: { access: "signed_in" } }, async (request, reply): Promise<Wallets> => {
-    const body = parse(WalletCheckRequest, request.body);
-    const at = happened(body.checkedAt, "checkedAt");
-    return write(ctx, request, reply, async ({ q, auth }) => {
-      await q.query("select gs_check_wallet($1, $2, $3, $4, $5, $6)", [body.id, body.wallet, auth.user.id, body.appBalance, at, body.note ?? null]);
-      return { status: 201, body: await wallets(q) };
-    });
-  });
 
   // -- Settings -------------------------------------------------------------
 

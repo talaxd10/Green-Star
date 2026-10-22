@@ -4,8 +4,8 @@
 //   GET  /v1/fx-rates                 Rates by day
 //   PUT  /v1/fx-rates/:day            Set a day's dinar rate ("today" or a date)
 //   GET  /v1/payments                 Customer payments, with how each was paid
-//   POST /v1/payments                 Office or wallet payment, applied to the oldest unpaid
-//   POST /v1/payments/parts           One visit paid in more than one way: dollars and dinars, cash and a wallet
+//   POST /v1/payments                 A payment in cash or by FIB, applied to the oldest unpaid
+//   POST /v1/payments/parts           One visit paid in more than one way: dollars and dinars, cash and FIB
 //   GET  /v1/errors                   The CEO's Error entries
 //   POST /v1/errors                   An amount off what a customer owes, or onto it, with no money moving
 //   GET  /v1/cash-outs                Cash paid out of the vault

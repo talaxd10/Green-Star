@@ -1,4 +1,4 @@
-// Checks and alerts, the Today screen, the wallet check and the settings,
+// Checks and alerts, the Today screen and the settings,
 // over the real routes against a real Postgres.
 
 import { after, test } from "node:test";
@@ -263,7 +263,7 @@ test("Today: what the rounds went out to collect, what they took, and what was c
       result(c(dinars), "paid", { amount: 72_500, currency: "IQD" }),
       result(c(forgot), "unpaid"),
       result(c(held), "held"),
-      result(c(byWallet), "paid", { amount: 4_000, currency: "USD" }, "fastpay"),
+      result(c(byWallet), "paid", { amount: 4_000, currency: "USD" }, "fib"),
     ],
   });
   const officeBefore = before.officePaymentsUsdCents;
@@ -308,62 +308,22 @@ test("Today: what the rounds went out to collect, what they took, and what was c
   await s.sound();
 });
 
-test("a wallet is checked against its app: a gap needs a note and raises an alert", async () => {
-  const customer = await s.customer(unique("WALLET "));
+test("there is no wallet check: no address for it, and FIB money is just a way to pay", async () => {
+  const customer = await s.customer(unique("FIB "));
   await s.file([[customer, 50_000]]);
-  const wallet = async () => (await s.get("/v1/wallets")).body.wallets.find((w: { code: string }) => w.code === "wallet_zaincash_iqd");
-  const before = await wallet();
-  assert.deepEqual([before.method, before.currency, before.name], ["zaincash", "IQD", "ZainCash, dinars"]);
+  const paid = await s.send("POST", "/v1/payments", { customerId: customer, received: { amount: 145_000, currency: "IQD" }, method: "fib" });
+  assert.equal(paid.status, 201, JSON.stringify(paid.body));
 
-  await s.send("POST", "/v1/payments", { customerId: customer, received: { amount: 145_000, currency: "IQD" }, method: "zaincash" });
-  const paid = await wallet();
-  assert.equal(paid.ledgerBalance - before.ledgerBalance, 145_000);
-  assert.equal(paid.expectedInApp - before.expectedInApp, 145_000);
-  assert.ok(!Number.isNaN(Date.parse(paid.uncheckedSince)));
-  assert.equal(paid.checkDue, false, "it came in a moment ago");
-
-  const check = (appBalance: number, extra: Record<string, unknown> = {}, id = randomUUID()) =>
-    s.send("POST", "/v1/wallets/checks", { id, wallet: "wallet_zaincash_iqd", appBalance, ...extra });
-  const noNote = await check(paid.expectedInApp - 45_000);
-  assert.equal(noNote.status, 422);
-  assert.equal(noNote.body.code, "gap_note_required");
-  assert.equal((await check(-1, { note: "x" })).status, 400);
-  assert.equal((await check(1.5, { note: "x" })).status, 400);
-  assert.equal((await s.send("POST", "/v1/wallets/checks", { id: randomUUID(), wallet: "vault_usd", appBalance: 0, note: "x" })).status, 400);
-  assert.equal((await check(1, { note: "x", checkedAt: new Date(Date.now() + 3_600_000).toISOString() })).status, 400, "not in the future");
-  assert.equal((await wallet()).lastCheckedAt, before.lastCheckedAt, "nothing was recorded");
-
-  const id = randomUUID();
-  const short = await check(paid.expectedInApp - 45_000, { note: "took 45,000 out as cash" }, id);
-  assert.equal(short.status, 201, JSON.stringify(short.body));
-  const first = short.body.checks[0];
-  assert.deepEqual(
-    [first.id, first.code, first.currency, first.appBalance, first.expected, first.difference, first.note, first.checkedByName],
-    [id, "wallet_zaincash_iqd", "IQD", paid.expectedInApp - 45_000, paid.expectedInApp, -45_000, "took 45,000 out as cash", "Sarkar"],
+  assert.equal((await s.get("/v1/wallets")).status, 404);
+  assert.equal((await s.send("POST", "/v1/wallets/checks", { id: randomUUID(), wallet: "wallet_fib_iqd", appBalance: 0, note: "x" })).status, 404);
+  // The database refuses it too, so nothing can record one.
+  await assert.rejects(
+    h.db.direct.query("select gs_check_wallet($1, 'wallet_fib_iqd', $2, 0, now(), 'x')", [randomUUID(), randomUUID()]),
+    /permission denied/,
   );
-  const after = await wallet();
-  assert.equal(after.expectedInApp, paid.expectedInApp - 45_000, "from now on the app is expected to show what it showed");
-  assert.equal(after.ledgerBalance, paid.ledgerBalance, "the ledger is not touched");
-  assert.deepEqual([after.lastDifference, after.uncheckedSince, after.checkDue], [-45_000, null, false]);
-
-  // The same check sent again is one check.
-  assert.equal((await check(1, { note: "something else" }, id)).status, 201);
-  const { rows } = await h.owner.query("select count(*)::int as n from wallet_checks where id = $1", [id]);
-  assert.equal(rows[0].n, 1);
-  assert.equal((await wallet()).expectedInApp, after.expectedInApp);
-
-  const gaps = (await alerts("open", "&kind=wallet_gap")).filter((x) => x.amount === -45_000 && x.currency === "IQD" && x.title === "ZainCash, dinars: the app shows 45,000 IQD less than the books");
-  assert.equal(gaps.length, 1);
-  assert.equal(gaps[0]?.severity, "high");
-
-  // When the app matches, no note is needed and no alert follows.
-  const gapsBefore = (await alerts("open", "&kind=wallet_gap")).length;
-  const exact = await check(after.expectedInApp);
-  assert.equal(exact.status, 201);
-  assert.equal(exact.body.checks[0].difference, 0);
-  assert.equal((await alerts("open", "&kind=wallet_gap")).length, gapsBefore);
-
-  assert.equal((await call(h.app, "POST", "/v1/wallets/checks", { body: { id: randomUUID(), wallet: "wallet_fib_usd", appBalance: 0, note: "x" } })).status, 401);
+  // FIB money left for longer than any check would have allowed raises nothing.
+  const later = await h.owner.query("select count(*)::int as n from gs_current_problems(now() + interval '90 days', false) where kind in ('wallet_gap', 'wallet_check_due')");
+  assert.equal(later.rows[0].n, 0);
   await s.sound();
 });
 

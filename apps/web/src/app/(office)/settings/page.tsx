@@ -3,7 +3,7 @@
 import type { Carrier, Driver, Settings, UserList } from "@green-star/contracts";
 import { useState, type FormEvent } from "react";
 import { useToast } from "@/components/toast";
-import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, Loading, PageHead, Problem, Select } from "@/components/ui";
+import { Button, Card, CardHead, Chip, Dialog, Empty, Field, FormActions, Input, LinkButton, Loading, PageHead, Problem, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useGet, useSave } from "@/lib/hooks";
 import { dayTime, phone } from "@/lib/labels";
@@ -167,7 +167,7 @@ function People({ kind }: { kind: "drivers" | "carriers" }) {
 function Checks() {
   const toast = useToast();
   const settings = useGet<Settings>("/v1/settings");
-  const [draft, setDraft] = useState<{ held?: string; close?: string; wallet?: string }>({});
+  const [draft, setDraft] = useState<{ held?: string; close?: string }>({});
   const save = useSave(
     (body: unknown, key: string) => api.put<Settings>("/v1/settings", body, key),
     () => {
@@ -186,15 +186,13 @@ function Checks() {
   const s = settings.data;
   const held = draft.held ?? String(s.heldInCarDays);
   const close = draft.close ?? s.vaultCloseTime;
-  const wallet = draft.wallet ?? String(s.walletCheckDays);
   const days = (typed: string) => (/^\d{1,2}$/.test(typed.trim()) && Number(typed) >= 1 && Number(typed) <= 60 ? Number(typed) : null);
   const body = {
     ...(days(held) !== null && days(held) !== s.heldInCarDays ? { heldInCarDays: days(held) } : {}),
     ...(/^([01]\d|2[0-3]):[0-5]\d$/.test(close) && close !== s.vaultCloseTime ? { vaultCloseTime: close } : {}),
-    ...(days(wallet) !== null && days(wallet) !== s.walletCheckDays ? { walletCheckDays: days(wallet) } : {}),
   };
   const closeOk = /^([01]\d|2[0-3]):[0-5]\d$/.test(close);
-  const valid = days(held) !== null && days(wallet) !== null && closeOk;
+  const valid = days(held) !== null && closeOk;
 
   return (
     <Card>
@@ -206,15 +204,12 @@ function Checks() {
           void save.save(body);
         }}
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Held in the car, days" hint="Goods held longer raise an alert." problem={save.fieldProblem("heldInCarDays") ?? (days(held) === null ? "1 to 60" : undefined)}>
             {(id) => <Input id={id} className="num" inputMode="numeric" value={held} onChange={(e) => setDraft({ ...draft, held: e.target.value })} />}
           </Field>
           <Field label="Vault closing time" hint="Baghdad time, 24-hour. The reminder starts here." problem={save.fieldProblem("vaultCloseTime") ?? (closeOk ? undefined : "Like 18:00")}>
             {(id) => <Input id={id} className="num" inputMode="numeric" placeholder="18:00" value={close} onChange={(e) => setDraft({ ...draft, close: e.target.value })} />}
-          </Field>
-          <Field label="Wallet check, days" hint="How long wallet money may wait." problem={save.fieldProblem("walletCheckDays") ?? (days(wallet) === null ? "1 to 60" : undefined)}>
-            {(id) => <Input id={id} className="num" inputMode="numeric" value={wallet} onChange={(e) => setDraft({ ...draft, wallet: e.target.value })} />}
           </Field>
         </div>
         <Problem of={save.problem} />
@@ -295,12 +290,29 @@ function MoneyRules() {
   );
 }
 
+function Starting() {
+  return (
+    <Card>
+      <CardHead
+        title="Starting balances"
+        hint="What stood on the day you start: the vault's cash, what is owed to China, and what each customer owed."
+        action={
+          <LinkButton href="/starting-balances" small>
+            Type them in
+          </LinkButton>
+        }
+      />
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <>
-      <PageHead title="Settings" hint="The checks, the money rules, the people who carry the goods, your password and the devices you are signed in on." />
+      <PageHead title="Settings" hint="Starting balances, the checks, the money rules, the people who carry the goods, your password and the devices you are signed in on." />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <div className="flex flex-col gap-5">
+          <Starting />
           <Checks />
           <MoneyRules />
           <MyPassword />

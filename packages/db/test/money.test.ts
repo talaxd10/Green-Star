@@ -115,7 +115,7 @@ test("a customer's account goes down only against money that really arrived", ()
   const real = newCustomer();
   post(officePayment({ customerId: real, received: usd(8500) }), DAY);
   post(officePayment({ customerId: real, received: iqd(123250), ratePer100: 145000 }), DAY);
-  post(walletPayment({ customerId: real, wallet: "zaincash", received: iqd(145000), ratePer100: 145000 }), DAY);
+  post(walletPayment({ customerId: real, wallet: "fib", received: iqd(145000), ratePer100: 145000 }), DAY);
   post(cashOut({ category: "fuel_car", amount: iqd(25000), reason: "Fuel" }), DAY);
   post(sentToChina({ amountUsdCents: 5000n }), DAY);
   post(currencyExchange({ iqdGiven: 145000n, usdCentsReceived: 10000n }), DAY);
@@ -175,7 +175,7 @@ test("every payment can be read back with how it was paid", () => {
   const round = roundOut([consignmentId]);
   enterResult({ roundId: round, consignmentId, outcome: "paid", received: { amount: 123250, currency: "IQD" }, at: DAY });
   const office = post(officePayment({ customerId: customer, received: usd(5000) }), DAY);
-  post(walletPayment({ customerId: customer, wallet: "fastpay", received: usd(2500) }), DAY);
+  post(walletPayment({ customerId: customer, wallet: "fib", received: usd(2500) }), DAY);
   app(`select gs_reverse_entry(${lit(office)}, ${lit(USER)}, 'Typed twice', ${lit(randomUUID())});`);
   app(`insert into attachments (entry_id, kind, storage_key, uploaded_by) values (${lit(office)}, 'payment_receipt', ${lit(`receipts/${office}.jpg`)}, ${lit(USER)});`);
   refused(() => app(`insert into attachments (kind, storage_key, uploaded_by) values ('payment_receipt', ${lit(randomUUID())}, ${lit(USER)});`), /attachments_belongs_somewhere/);
@@ -187,7 +187,7 @@ test("every payment can be read back with how it was paid", () => {
                            || case when paid_for_consignment_id is not null then ' for its consignment' else '' end,
                            ' | ' order by credited_usd_cents)
          from payments where customer_id = ${lit(customer)};`),
-    "fastpay 2500 USD = 2500 | office_cash 5000 USD = 5000 reversed | driver_cash 123250 IQD = 8500 at 145000 on a round for its consignment",
+    "fib 2500 USD = 2500 | office_cash 5000 USD = 5000 reversed | driver_cash 123250 IQD = 8500 at 145000 on a round for its consignment",
   );
 });
 

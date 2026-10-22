@@ -290,35 +290,20 @@ test("the driver forgot to collect: it is on Today the moment the round is saved
   await expect(page.getByText(/Resolved by Sarkar on/)).toBeVisible();
 });
 
-test("a wallet is checked against its app, and a difference becomes an alert", async () => {
+test("a payment is cash or FIB, and there is no wallet to check", async () => {
   await page.getByRole("link", { name: "Customers" }).click();
   await page.getByRole("link", { name: "Hemn S." }).click();
   await page.getByRole("link", { name: "Take a payment" }).click();
+  const how = page.getByLabel("How it was paid");
+  await expect(how.locator("option")).toHaveText(["Cash at the office", "FIB"]);
   await page.getByLabel("Amount received").fill("20");
-  await page.getByLabel("How it was paid").selectOption({ label: "FIB" });
+  await how.selectOption({ label: "FIB" });
   await page.getByRole("button", { name: "Take the payment" }).click();
   await expect(page.getByText("$20.00 taken from Hemn S.")).toBeVisible();
 
-  const fib = page.getByRole("row", { name: /FIB, dollars/ });
-  await expect(fib).toContainText("$20.00");
-  await expect(fib).toContainText("Never");
-  await fib.getByRole("button", { name: "Check" }).click();
-
-  const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("The books say it should show")).toBeVisible();
-  await dialog.getByLabel("Balance in the app, in dollars").fill("20");
-  await expect(dialog.getByText("It matches the books.")).toBeVisible();
-  await dialog.getByLabel("Balance in the app, in dollars").fill("15");
-  await expect(dialog.getByText("less than the books")).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Save the check" })).toBeDisabled();
-  await dialog.getByLabel("Why they differ").fill("Sent $5 to the driver from the app");
-  await dialog.getByRole("button", { name: "Save the check" }).click();
-  await expect(page.getByText("FIB, dollars checked")).toBeVisible();
-  await expect(fib).toContainText("$15.00");
-  await expect(fib).toContainText("$5.00 less in the app");
-
-  await page.getByRole("link", { name: /Alerts/ }).click();
-  await expect(page.getByText("FIB, dollars: the app shows $5.00 less than the books")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Hemn S\..*FIB/ }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Wallets" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Check" })).toHaveCount(0);
 });
 
 test("a trusted customer's statement is made to send, as an image, a PDF and a text, and marked as sent", async () => {
@@ -664,6 +649,27 @@ test("the driver is given money for the round, gives change at a door from it, a
   await expect(byCity.getByRole("row", { name: /Erbil/ })).toContainText("$51.72");
   const byRound = page.locator("section").filter({ has: page.getByRole("heading", { name: "By round" }) });
   await expect(byRound.getByRole("row").filter({ has: page.getByRole("link", { name: String(round.number), exact: true }) })).toContainText("Kawa");
+});
+
+test("starting balances are typed in once: the vault, China, and a customer's credit", async () => {
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("link", { name: "Type them in" }).click();
+  await expect(page.getByRole("heading", { name: "Starting balances" })).toBeVisible();
+
+  await page.getByLabel("Vault, dollars").fill("1,000");
+  await page.getByLabel("Owed to China").fill("2,500");
+  await page.getByRole("button", { name: "Save the office's starting balances" }).click();
+  await expect(page.getByText("Starting balances saved")).toBeVisible();
+  await expect(page.getByLabel("Vault, dollars")).toHaveValue("1000.00");
+
+  await pick(page.getByPlaceholder("Phone, mark or name"), "Hemn", "Hemn S.");
+  await page.getByRole("radio", { name: "He has credit" }).click();
+  await page.getByLabel("Amount, in dollars").fill("25");
+  await page.getByRole("button", { name: "Save his starting balance" }).click();
+  await expect(page.getByText("Starting balance saved for Hemn S.")).toBeVisible();
+  const row = page.getByRole("row", { name: /Hemn S\./ });
+  await expect(row).toContainText("credit");
+  await expect(row).toContainText("$25.00");
 });
 
 test("signed out, nothing opens: every screen asks him to sign in, and the API answers nobody", async () => {

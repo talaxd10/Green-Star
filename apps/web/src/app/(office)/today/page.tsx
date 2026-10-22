@@ -107,7 +107,7 @@ export default function TodayPage() {
               <Stat label="To collect">
                 <Money amount={t.expectedUsdCents} />
               </Stat>
-              <Stat label="Collected" hint="Cash and wallets, in dollars">
+              <Stat label="Collected" hint="Cash and FIB, in dollars">
                 <Money amount={t.collectedUsdCents} />
               </Stat>
               <Stat label="Not collected" tone={notCollected > 0 ? "amber" : undefined} hint="On account, held or unpaid">
@@ -141,7 +141,7 @@ export default function TodayPage() {
               </tbody>
             </Table>
             <p className="flex items-baseline justify-between border-t border-rule px-5 py-3.5 text-sm">
-              <span className="text-muted">Paid at the office today, cash and wallets</span>
+              <span className="text-muted">Paid at the office today, cash and FIB</span>
               <Money amount={t.officePaymentsUsdCents} className="font-semibold" />
             </p>
           </Card>

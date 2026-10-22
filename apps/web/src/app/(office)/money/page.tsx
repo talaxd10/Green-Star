@@ -7,7 +7,6 @@ import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { CustomerPicker } from "@/components/customer-picker";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHead, Dialog, Empty, Field, FormActions, Input, Loading, Money, PageHead, Problem, Segmented, Select, Stat, Table, Td, Textarea, Th } from "@/components/ui";
-import { WalletsCard } from "@/components/wallets";
 import { api } from "@/lib/api";
 import { useGet, useRateToday, useSave } from "@/lib/hooks";
 import { CASH_OUT, dayTime, METHOD } from "@/lib/labels";
@@ -139,7 +138,7 @@ let partKey = 0;
 const newPart = (currency: Currency = "USD"): PartRow => ({ key: ++partKey, amount: "", currency, method: "office_cash" });
 
 /**
- * What a customer hands over in one visit: dollars, dinars, a wallet, or any
+ * What a customer hands over in one visit: dollars, dinars, FIB, or any
  * mix of them. Dollars are applied first, so the dinars settle what is left.
  */
 function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
@@ -241,7 +240,7 @@ function PaymentForm({ initial }: { initial: CustomerSummary | null }) {
                 <Field label={i === 0 ? "How it was paid" : "Paid by"}>
                   {(id) => (
                     <Select id={id} value={row.method} onChange={(e) => edit(row.key, { method: e.target.value as OfficeMethod })}>
-                      {(["office_cash", "fib", "fastpay", "zaincash"] as const).map((m) => (
+                      {(["office_cash", "fib"] as const).map((m) => (
                         <option key={m} value={m}>
                           {METHOD[m]}
                         </option>
@@ -616,12 +615,11 @@ function MoneyScreen() {
             </div>
             {tab === "payment" ? <PaymentForm initial={preset.data ?? null} /> : tab === "cash_out" ? <CashOutForm /> : tab === "exchange" ? <ExchangeForm /> : <ErrorForm initial={preset.data ?? null} initialCents={errorCents} initialConsignment={errorConsignment} />}
           </Card>
-          <WalletsCard />
         </div>
 
         <div className="flex flex-col gap-5">
           <Card>
-            <CardHead title="Latest payments" hint="At the office, by wallet, and on rounds." />
+            <CardHead title="Latest payments" hint="At the office and on rounds, in cash or by FIB." />
             {payments.data === undefined ? (
               <Loading />
             ) : payments.data.items.length === 0 ? (

@@ -174,7 +174,7 @@ await send("PUT", `/v1/rounds/${r2}/results`, {
     result(f2.by[shvan] as string, "held", ago(1, 14)),
     result(f3.by[dara] as string, "on_account", ago(1, 15)),
     result(f3.by[hemn] as string, "unpaid", ago(1, 16)),
-    result(f3.by[soran] as string, "paid", ago(1, 17), { amount: 9_800, currency: "USD" }, "fastpay"),
+    result(f3.by[soran] as string, "paid", ago(1, 17), { amount: 9_800, currency: "USD" }, "fib"),
   ],
 });
 await send("POST", "/v1/disputes", { consignmentId: f2.by[nasrin], kind: "damaged", note: "Two cartons crushed at the corners" });
@@ -188,7 +188,7 @@ await file("GSSK6944", 0, [[rebwar, 9_900, 3, "Erbil"], [nasrin, 14_000, 4, "Duh
 
 // -- Money at the office.
 await send("POST", "/v1/payments", { customerId: karzan, received: { amount: 5_000, currency: "USD" }, method: "office_cash", happenedAt: ago(1, 11) });
-await send("POST", "/v1/payments", { customerId: goran, received: { amount: 145_000, currency: "IQD" }, method: "zaincash", happenedAt: ago(0, 9) });
+await send("POST", "/v1/payments", { customerId: goran, received: { amount: 145_000, currency: "IQD" }, method: "fib", happenedAt: ago(0, 9) });
 // Baxtyar pays for the file that is waiting, in two ways: $27 in dollars and the rest in dinars.
 // The rest is 39,150 IQD at 1,450; he hands over 39,000, and that settles it.
 await send("POST", "/v1/payments/parts", {
@@ -226,11 +226,6 @@ await send("POST", "/v1/vault/close", {
   iqdNotes: notesFor(expected("IQD"), [50000, 25000, 10000, 5000, 1000, 500, 250]),
   note: "$2 short. Counted twice. Will check yesterday's receipts.",
 });
-
-// -- The wallet check: FastPay was read in its app and matches. FIB and ZainCash are still to check.
-const { wallets } = await send("GET", "/v1/wallets");
-const fastpay = wallets.find((w: { code: string }) => w.code === "wallet_fastpay_usd");
-await send("POST", "/v1/wallets/checks", { id: randomUUID(), wallet: "wallet_fastpay_usd", appBalance: fastpay.expectedInApp });
 
 // -- Statements: Yaro Trading was sent what it owes. The other trusted customers are still to send.
 const yaroStatement = randomUUID();

@@ -250,8 +250,8 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | POST | `/v1/exceptions` | Allow a pay-first handover without full payment, with a reason |
 | GET | `/v1/fx-rates/today`, `/v1/fx-rates` | Today's rate; rates by day |
 | PUT | `/v1/fx-rates/:day` | Set a day's dinar rate (`today` or a date) |
-| GET, POST | `/v1/payments` | Payments with how each was paid; an office or wallet payment |
-| POST | `/v1/payments/parts` | One visit paid in two to four ways: dollars and dinars, cash and a wallet. All saved or none |
+| GET, POST | `/v1/payments` | Payments with how each was paid; a payment in cash or by FIB |
+| POST | `/v1/payments/parts` | One visit paid in two to four ways: dollars and dinars, cash and FIB. All saved or none |
 | GET, POST | `/v1/errors` | The CEO's Error entries; an amount off what a customer owes, or onto one of his consignments (`add`, `consignmentId`) |
 | GET, POST | `/v1/cash-outs` | Cash out of the vault: China, fuel, car parts, workers, transport between cities, driver pay, customs and airport, rent and salaries, other; with a city and round |
 | POST | `/v1/exchanges` | Dinars changed into dollars, or back |
@@ -272,9 +272,10 @@ Signing in, signing out and `/healthz` are open. Every other address needs the C
 | GET | `/v1/alerts/count` | How many are open, and how many of those are serious |
 | POST | `/v1/alerts/:id/resolve` | Close an alert with a note |
 | GET | `/v1/reports/today` | Today's rounds: to collect, collected, counted in, per currency. Files in progress |
-| GET | `/v1/wallets` | Each wallet: the books, what its app should show, the last checks |
-| POST | `/v1/wallets/checks` | What the wallet's app shows, typed in and compared |
-| GET, PUT | `/v1/settings` | Held-in-car days, vault closing time, wallet check days, the dinar rounding step |
+| GET | `/v1/starting-balances` | The vault's, China's and every customer's starting balance |
+| PUT | `/v1/starting-balances/customers/:id` | What he owed before, or the credit he had. 0 clears it |
+| PUT | `/v1/starting-balances/office` | The vault's cash, or what is owed to China. 0 clears it |
+| GET, PUT | `/v1/settings` | Held-in-car days, vault closing time, the dinar rounding step |
 | GET | `/healthz` | For the host's uptime check. 503 when the database is down or the checks failed after the latest save |
 
 The shape of every request and reply is in `packages/contracts`.
@@ -399,6 +400,14 @@ Statements are drawn with Chromium, and so is the end-to-end test. Install it on
 
 `pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
+## No wallets, and starting balances (22 October)
+
+Tala: "Remove FastPay and ZainCash", "remove wallet systems at all for now: it should be just like adding normal money and then selecting how the money was paid", and "Starting balances: San wants to add them manually. We want to track it from now."
+
+- **A payment is cash or FIB.** At the office: cash or FIB; on a round: the driver's cash or FIB. FastPay and ZainCash are refused by the API and by the database (`0021_no_wallets.sql`); an old one can still be taken back. FIB money still lands on its own account, not in the vault, so the vault count stays right. There is no wallet check, no wallet screen and no wallet alert; `gs_check_wallet` can no longer be called.
+- **Starting balances** (`0022`, `0023`, Settings, Type them in): the vault's dollars and dinars, what is owed to China, and each customer's debt or credit on the day the office starts. Each is one `opening_balance` entry against the Starting balances account. Typing one again takes the old one back and posts the new one; 0 clears it; only `gs_set_starting_balance` posts or takes one back.
+- **What a customer owed before is paid first.** It is a consignment on a file of its own, "Starting balances", that counts as older than every file from China. That file is never listed with the files, never on Today, and never goes on a round. A credit he had pays his next file, like a payment not used yet. Nothing about a starting balance touches the China account unless San types China's.
+
 ## Online
 
 The whole system runs as one free Render web service (`render.yaml`, `Dockerfile`) with the database on Neon. `infra/start.sh` is what runs:
@@ -509,32 +518,32 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 - **Customers pay in dollars, dinars and FIB at once.** Dinars and FIB dinars are divided by the day's rate.
 - **A small error is fixed with an entry called Error.**
 - **The system is his alone.** One kind of account.
+- **An Error entry never takes off more than he owes** (Tala, 22 October).
+- **No FastPay, no ZainCash, no wallet system.** A payment is the amount and how it was paid: cash or FIB (Tala, 22 October).
+- **Starting balances are typed in by San,** and the books track from that day (Tala, 22 October).
+- **Statements and screens are in English** (Tala, 22 October).
 
 ## Assumed, to confirm with the CEO
 
 - **A rounded payment has to come within half a step of what is owed to settle it.** 208,810 owed: 208,500 and 209,000 settle it, 208,000 does not and leaves 52 cents owed. If he also takes "a bit less, let it go", that is what the Error entry is for.
 - **An Error entry that adds goes onto one of his consignments,** his newest unless another is picked, because everything a customer owes belongs to a file.
-- **An Error entry never takes off more than he owes.** "No limit" is read as no dollar cap; it does not make credit out of nothing.
 - **One visit is at most four payments,** and two payments in the same currency and the same way are added up into one.
 
-- Wallet accounts (FIB, FastPay, ZainCash) exist in both dollars and dinars, because the board doesn't say which currency wallet payments arrive in.
+- FIB takes dollars and dinars; each has its own account. FastPay and ZainCash keep theirs only for what was paid that way before.
 - Money sent to China leaves the dollar vault.
 - A phone number with no country code is read as Iraqi (+964).
 - A mark prefix matches whole words: `YARO` matches `YARO-OSMAN` and `YARO 2`, but not `YARO2`.
 - **The notes he counts.** Dollars: 1, 2, 5, 10, 20, 50, 100. Dinars: 250, 500, 1,000, 5,000, 10,000, 25,000, 50,000. No coins. The list is a table, so it changes without code.
-- **A customer can pay by wallet at the door.** That money goes to the wallet's account, not the driver's cash.
-- **Goods held in the car take no money on the round.** If he pays later, it is an office or wallet payment, and the goods go out as `paid` on the next round.
-- **The vault's first close is its opening count.** Until the starting balances are loaded the ledger starts at zero, so the first count shows the whole box as a gap, with a note. Nothing else is needed to start.
+- **A customer can pay by FIB at the door.** That money goes to FIB's account, not the driver's cash.
+- **Goods held in the car take no money on the round.** If he pays later, it is a payment at the office, in cash or by FIB, and the goods go out as `paid` on the next round.
+- **The vault starts from its starting balance.** Settings, Starting balances: the dollars and dinars in the box on the first day. Without one, the first count shows the whole box as a gap, with a note. Nothing else is needed to start.
 - **The ledger's vault can go below zero.** A cash out typed before the hand-in that funded it is not refused. It shows in `vault_status`.
 
-- **Statements are in English,** like the screens. A name is shown exactly as it was typed, Kurdish and Arabic included. If customers should get theirs in Kurdish, the text and the page are one file each.
 - **"This week" is seven days** from when the last statement was marked as sent.
 - **A statement shows a customer his files, his payments and the dinar rate each was counted at.** It does not show notes typed in the office.
-- **Money leaving a wallet has no entry on the board.** A wallet account only ever goes up. When he takes cash out of FIB or sends it on, the next wallet check shows a gap, he writes where it went, and the app is expected to show the new balance from then on. This keeps the check honest but the money's path is only in the note. To decide: an entry for "wallet to vault", and whether money to China can leave a wallet.
-- **The wallet check is due 7 days after the oldest money nobody has checked,** not on a fixed weekday. A wallet nobody paid into is never due.
 - **Goods are held too long after 3 days,** and **the vault closes at 18:00.** Both are in Settings.
 - **A resolved alert stays resolved even if it gets worse.** A customer over his limit by $50 whose alert was resolved does not raise a new one at $500 over. He raises one again after he has been back under the limit.
-- **What counts as serious.** High: not collected, any cash gap, a wallet gap, the books out of step. Medium: vault not counted, cartons, over limit, held too long, old rate. Low: a wallet check that is due.
+- **What counts as serious.** High: not collected, any cash gap, the books out of step. Medium: vault not counted, cartons, over limit, held too long, old rate.
 
 - **A password is at least 10 characters.** No other rules.
 - **A session ends after 14 days without use.**
@@ -543,4 +552,4 @@ Sign convention: a positive line is "goes up" for money held or owed to us. Mone
 
 ## Not built yet
 
-The file check that runs on each import (it needs the real China files' columns), receipts and photos (`/v1/attachments`, which needs the file storage set up), the weekly backup test (it needs the hosting), and starting balances. The columns of `shipment_lines` are provisional until the real China files arrive.
+The file check that runs on each import (it needs the real China files' columns), receipts and photos (`/v1/attachments`, which needs the file storage set up: Cloudflare R2 is the pick), and the weekly backup test. The columns of `shipment_lines` are provisional until the real China files arrive.

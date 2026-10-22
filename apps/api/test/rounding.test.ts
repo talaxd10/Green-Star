@@ -124,8 +124,8 @@ test("dinars paid for one consignment settle that one; paid for nothing in parti
   assert.deepEqual(rows.map((c: { amountDueUsdCents: number; remainingUsdCents: number }) => [c.amountDueUsdCents, c.remainingUsdCents]).sort(), [[5_000, 5_000], [6_200, 0]]);
 
   // In parts, for that consignment too: dollars first, then the dinars settle what is left of everything.
-  const both = await s.send("POST", "/v1/payments/parts", { customerId: a, parts: [cash(usd(2_000)), { received: iqd(43_500), method: "zaincash" }] });
-  assert.equal(brief(both.body.payments), "office_cash:2000:USD:2000 zaincash:43500:IQD:3000");
+  const both = await s.send("POST", "/v1/payments/parts", { customerId: a, parts: [cash(usd(2_000)), { received: iqd(43_500), method: "fib" }] });
+  assert.equal(brief(both.body.payments), "office_cash:2000:USD:2000 fib:43500:IQD:3000");
   assert.equal(await s.balance(a), 0);
 
   // 30 cents left from an older file and $62.00 on the new one: 90,300 dinars ($62.28) is nearer to
@@ -447,7 +447,12 @@ test("the two accounts are on the books with everything else", async () => {
   const accounts = (await s.get("/v1/accounts")).body.items as { code: string | null; kind: string; currency: string; name: string }[];
   assert.deepEqual(
     accounts.filter((x) => x.kind === "adjustment").map((x) => [x.code, x.currency, x.name]).sort(),
-    [["dinar_rounding_usd", "USD", "Dinar rounding"], ["errors_usd", "USD", "Errors"]],
+    [
+      ["dinar_rounding_usd", "USD", "Dinar rounding"],
+      ["errors_usd", "USD", "Errors"],
+      ["opening_balances_iqd", "IQD", "Starting balances, dinars"],
+      ["opening_balances_usd", "USD", "Starting balances, dollars"],
+    ],
   );
   assert.equal(h.app.ctx.checks.failed, 0, String(h.app.ctx.checks.lastError));
 });

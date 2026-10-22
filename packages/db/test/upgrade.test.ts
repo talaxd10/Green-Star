@@ -111,7 +111,7 @@ test("an office that had an owner and an office screen: both are switched off an
   );
   assert.equal(sql("select count(*) from round_payment_entries;"), "1");
   assert.equal(sql("select dinar_rounding_iqd from settings;"), "1000");
-  assert.equal(sql("select string_agg(code || ':' || balance, ' ' order by code) from account_overview where kind = 'adjustment';"), "dinar_rounding_usd:0 errors_usd:0");
+  assert.equal(sql("select string_agg(code || ':' || balance, ' ' order by code) from account_overview where kind = 'adjustment';"), "dinar_rounding_usd:0 errors_usd:0 opening_balances_iqd:0 opening_balances_usd:0");
 
   // The 62 cents from before can be let go with an Error entry, and that can be taken back.
   const error = appAs(ceo)(`select gs_post_entry('error_correction', '2026-01-01T10:00:00Z', ${lit(ceo)}, 'upgrade-error', jsonb_build_array(

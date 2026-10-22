@@ -107,7 +107,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
       where = ` and status = $${params.length}::shipment_status`;
     }
     const rows = await read(ctx, (q) =>
-      q.query(`select o.*, ${p.columns} from shipment_overview o where true ${where} ${p.where(params)} ${p.orderAndLimit(params)}`, params),
+      q.query(`select o.*, ${p.columns} from shipment_overview o where not exists (select 1 from shipments s where s.id = o.shipment_id and s.opening) ${where} ${p.where(params)} ${p.orderAndLimit(params)}`, params),
     );
     return p.page(rows, toShipment);
   });
@@ -175,7 +175,8 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
       params.push(query.customerId);
       where += ` and customer_id = $${params.length}`;
     }
-    if (query.filter === "ready") where += " and status in ('listed', 'held')";
+    // What he owed before is money, not goods: it is never ready for a round.
+    if (query.filter === "ready") where += " and status in ('listed', 'held') and shipment_id not in (select id from shipments where opening)";
     if (query.filter === "unpaid") where += " and remaining_usd_cents > 0";
     if (query.customerId === undefined && query.filter === undefined) {
       throw new ApiError(400, "invalid_request", "Ask for a customer's consignments, or the ones ready for a round", {

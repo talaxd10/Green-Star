@@ -19,7 +19,6 @@ function places(alert: Alert): { href: string; label: string }[] {
   if (alert.customerId !== null) out.push({ href: `/customers/${alert.customerId}`, label: alert.customerName ?? "Customer" });
   if (alert.shipmentId !== null) out.push({ href: `/files/${alert.shipmentId}`, label: alert.shipmentCode ?? "File" });
   if (alert.kind === "vault_gap" || alert.kind === "vault_not_closed") out.push({ href: "/vault", label: "Vault close" });
-  if (alert.kind === "wallet_gap" || alert.kind === "wallet_check_due") out.push({ href: "/money#wallets", label: "Wallets" });
   if (alert.kind === "payment_at_old_rate" && alert.customerId !== null) out.push({ href: `/money?customer=${alert.customerId}`, label: "Payments" });
   return out;
 }

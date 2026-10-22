@@ -42,6 +42,8 @@ export function lineText(line: StatementLine): string {
       ? `File ${line.shipmentCode ?? ""}`.trim()
       : line.kind === "correction"
         ? "Correction"
+        : line.kind === "opening"
+        ? "Balance brought forward"
         : line.method === null
         ? "Payment"
         : line.method === "driver_cash" || line.method === "office_cash"

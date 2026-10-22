@@ -4,11 +4,14 @@
 import { z } from "zod";
 import { type Currency, Day, Instant, Money, Note, Notes, PageQuery, Reason, Uuid } from "./common.ts";
 
-/** How a customer can pay at the office. On a round it is driver cash or a wallet. */
-export const OFFICE_METHODS = ["office_cash", "fib", "fastpay", "zaincash"] as const;
+/** How a customer can pay at the office: cash or FIB. On a round it is driver cash or FIB. */
+export const OFFICE_METHODS = ["office_cash", "fib"] as const;
 export type OfficeMethod = (typeof OFFICE_METHODS)[number];
 
-export const PAYMENT_METHODS = ["driver_cash", ...OFFICE_METHODS] as const;
+/** FastPay and ZainCash were taken until 22 October 2026; old payments may still show them. */
+export const REMOVED_METHODS = ["fastpay", "zaincash"] as const;
+
+export const PAYMENT_METHODS = ["driver_cash", ...OFFICE_METHODS, ...REMOVED_METHODS] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 /** Where cash leaves the vault to. His exact list, plus money sent to China. */

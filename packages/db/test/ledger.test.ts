@@ -288,7 +288,7 @@ test("random payments in both currencies always balance", () => {
           draft = officePayment({ customerId, received, ...rate });
           break;
         case 2:
-          draft = walletPayment({ customerId, wallet: pick(["fib", "fastpay", "zaincash"] as const), received, ...rate });
+          draft = walletPayment({ customerId, wallet: "fib", received, ...rate });
           break;
         case 3:
           draft = sentToChina({ amountUsdCents: cents });

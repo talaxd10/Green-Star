@@ -24,6 +24,7 @@ import { alertRoutes } from "./routes/alerts.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { customerRoutes } from "./routes/customers.ts";
 import { driverRoutes } from "./routes/drivers.ts";
+import { startingRoutes } from "./routes/starting.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { importRoutes } from "./routes/imports.ts";
 import { moneyRoutes } from "./routes/money.ts";
@@ -198,6 +199,7 @@ export async function buildApp(config: Config, db: Db): Promise<FastifyInstance>
   await app.register(moneyRoutes, { prefix: "/v1" });
   await app.register(alertRoutes, { prefix: "/v1" });
   await app.register(statementRoutes, { prefix: "/v1" });
+  await app.register(startingRoutes, { prefix: "/v1" });
 
   return app;
 }

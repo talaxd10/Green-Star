@@ -80,26 +80,26 @@ test("dollars are applied first whatever order they are given in, so the dinars 
   assert.equal(parts(round, consignmentId), "driver_cash:40000:USD:40000 driver_cash:209000:IQD:13300");
 });
 
-test("cash and a wallet at one stop: the driver holds only the cash", () => {
+test("cash and FIB at one stop: the driver holds only the cash", () => {
   const { customer, consignmentId, round } = atTheDoor("Three Ways", 53300n);
-  const wallet = { iqd: on("wallet_fib_iqd"), usd: on("wallet_fastpay_usd") };
+  const wallet = { iqd: on("wallet_fib_iqd"), usd: on("wallet_fib_usd") };
 
-  // $200 in cash, $100 by FastPay, 100,000 IQD in cash, and the rest by FIB in dinars.
+  // $200 in cash, $100 by FIB, 100,000 IQD in cash, and the rest by FIB in dinars.
   // What is left for the last part: $533 - $300 - 100,000 IQD ($63.69) = $169.31 = 265,817 IQD. He sends 266,000.
   const result = enterResult({
     roundId: round, consignmentId, outcome: "paid", at: DOOR,
     received: { amount: 20000, currency: "USD" },
     more: [
       { amount: 100000, currency: "IQD" },
-      { amount: 10000, currency: "USD", method: "fastpay" },
+      { amount: 10000, currency: "USD", method: "fib" },
       { amount: 266000, currency: "IQD", method: "fib" },
     ],
   });
   assert.equal(customerBalance(customer), 0n);
-  assert.equal(parts(round, consignmentId), "driver_cash:20000:USD:20000 fastpay:10000:USD:10000 driver_cash:100000:IQD:6369 fib:266000:IQD:16931");
+  assert.equal(parts(round, consignmentId), "driver_cash:20000:USD:20000 fib:10000:USD:10000 driver_cash:100000:IQD:6369 fib:266000:IQD:16931");
   assert.equal(roundCash(round), "USD:20000 IQD:100000", "wallet money is not the driver's to hand in");
   assert.equal(on("wallet_fib_iqd") - wallet.iqd, 266000n);
-  assert.equal(on("wallet_fastpay_usd") - wallet.usd, 10000n);
+  assert.equal(on("wallet_fib_usd") - wallet.usd, 10000n);
   assert.equal(entriesOf(result), "4");
   // Each part is its own line on his statement, and each says which round it was taken on.
   assert.equal(

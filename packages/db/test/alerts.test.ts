@@ -318,86 +318,41 @@ test("the settings are one row, changed only by an active CEO, and every change 
   app("update settings set held_in_car_days = 3;");
 });
 
-test("a wallet is checked against its app: a gap needs a note and is carried forward", () => {
-  const customer = newCustomer("Wallet Payer");
+test("FastPay and ZainCash are not taken any more; an old one can still be taken back", () => {
+  const customer = newCustomer("Old Wallet Payer");
   charge(customer, 50000n, new Date("2026-12-01T05:00:00Z"));
-  const status = () => app("select ledger_balance || '|' || expected_in_app || '|' || coalesce(last_difference::text, '-') || '|' || (unchecked_since is not null) from wallet_status where code = 'wallet_fib_iqd';");
-  const base = Number(app("select expected_in_app from wallet_status where code = 'wallet_fib_iqd';"));
-  post(walletPayment({ customerId: customer, received: iqd(145000n), ratePer100: 145000, wallet: "fib" }), DAY);
-  assert.equal(status(), `${base + 145000}|${base + 145000}|-|true`);
-
-  const check = (balance: number, note: string | null, id = randomUUID(), account = "wallet_fib_iqd") =>
-    `select gs_check_wallet(${lit(id)}, ${lit(account)}, ${lit(USER)}, ${balance}, ${lit(DAY.toISOString())}, ${note === null ? "null" : lit(note)});`;
-
-  refused(() => app(check(base + 100000, null)), /gap_note_required/);
-  refused(() => app(check(base + 100000, "   ")), /gap_note_required/);
-  refused(() => app(check(-1, "negative")), /balance_invalid/);
-  refused(() => app(check(5, "x", randomUUID(), "wallet_nowhere")), /wallet_not_found/);
-  refused(() => app(check(5, "x", randomUUID(), "vault_usd")), /wallet_not_found/);
-  assert.equal(app("select count(*) from wallet_checks where account_id = (select id from accounts where code = 'wallet_fib_iqd');"), "0");
-
-  // The app shows 45,000 less than the books: he took it out as cash.
-  const first = randomUUID();
-  app(check(base + 100000, "took 45,000 out as cash", first));
-  assert.equal(status(), `${base + 145000}|${base + 100000}|-45000|false`);
-  // The same request again is one check.
-  app(check(base + 100000, "took 45,000 out as cash", first));
-  app(check(1, "something else entirely", first));
-  assert.equal(app(`select count(*) from wallet_checks where id = ${lit(first)};`), "1");
-  refused(() => app(check(5, "x", first, "wallet_fib_usd")), /check_id_reused/);
-
-  sync();
-  assert.equal(alertsOf("wallet_gap", first), "open/true");
-  assert.equal(field("wallet_gap", first, "title || '|' || amount || '|' || currency"), "FIB, dinars: the app shows 45,000 IQD less than the books|-45000|IQD");
-
-  // From now on the app is expected to show what it showed: no note needed when it matches.
-  const second = randomUUID();
-  app(check(base + 100000, null, second));
-  sync();
-  assert.equal(alertsOf("wallet_gap", second), "");
+  for (const wallet of ["fastpay", "zaincash"] as const) {
+    refused(() => post(walletPayment({ customerId: customer, received: usd(1000n), wallet }), DAY), /method_removed/);
+    refused(() => post(walletPayment({ customerId: customer, received: iqd(14500n), ratePer100: 145000, wallet }), DAY), /method_removed/);
+  }
+  // FIB is still a way to pay.
+  post(walletPayment({ customerId: customer, received: usd(1000n), wallet: "fib" }), DAY);
   post(walletPayment({ customerId: customer, received: iqd(14500n), ratePer100: 145000, wallet: "fib" }), DAY);
-  assert.equal(status(), `${base + 159500}|${base + 114500}|0|true`);
-  refused(() => app(check(base + 100000, null)), /gap_note_required/);
-  app(check(base + 114500, null));
 
-  // A check is never edited or deleted.
-  refused(() => owner(`update wallet_checks set app_balance = 1 where id = ${lit(first)};`), /ledger_immutable/);
-  refused(() => owner(`delete from wallet_checks where id = ${lit(first)};`), /ledger_immutable/);
-  refused(() => app(`insert into wallet_checks (id, account_id, currency, app_balance, expected, checked_at, checked_by) select ${lit(randomUUID())}, id, 'IQD', 1, 1, now(), ${lit(USER)} from accounts where code = 'wallet_fib_iqd';`), /permission denied/);
-  refused(
-    () => owner(`insert into wallet_checks (id, account_id, currency, app_balance, expected, checked_at, checked_by) select ${lit(randomUUID())}, id, 'IQD', 1, 2, now(), ${lit(USER)} from accounts where code = 'wallet_fib_iqd';`),
-    /wallet_checks_gap_has_note/,
-  );
-
-  // Only an active CEO, under his own name.
-  const off = switchedOff();
-  refused(() => appAs(off)(check(base + 114500, null).replace(lit(USER), lit(off))), /actor_unknown/);
-  refused(() => appAs(off)(check(base + 114500, null)), /actor_unknown/);
-  refused(() => appNoActor(check(base + 114500, null)), /actor_required/);
-  const otherCeo = newCeo();
-  refused(() => appAs(otherCeo)(check(base + 114500, null)), /actor_mismatch/);
-  retire(otherCeo);
+  // One taken before 22 October can be reversed.
+  owner("alter table journal_lines disable trigger journal_lines_no_removed_methods;");
+  const old = post(walletPayment({ customerId: customer, received: usd(2000n), wallet: "zaincash" }), DAY);
+  owner("alter table journal_lines enable trigger journal_lines_no_removed_methods;");
+  const before = app("select balance from account_balances where account_id = gs_account('wallet_zaincash_usd');");
+  app(`select gs_reverse_entry(${lit(old)}, ${lit(USER)}, 'Typed twice', ${lit(randomUUID())});`);
+  assert.equal(BigInt(app("select balance from account_balances where account_id = gs_account('wallet_zaincash_usd');")), BigInt(before) - 2000n);
 });
 
-test("wallet money that goes unchecked for longer than the set days is an alert", () => {
-  const customer = newCustomer("Zain Payer");
-  charge(customer, 20000n, new Date("2026-12-01T05:00:00Z"));
-  post(walletPayment({ customerId: customer, received: usd(5000n), wallet: "zaincash" }), DAY);
-  const since = new Date(app("select unchecked_since from wallet_status where code = 'wallet_zaincash_usd';").replace(" ", "T").replace(/\+00$/, "Z"));
-  assert.ok(!Number.isNaN(since.getTime()));
-  const after = (days: number, seconds = 0) => new Date(since.getTime() + days * 86_400_000 + seconds * 1000);
-
-  syncAt(after(7, -2));
-  assert.equal(alertsOf("wallet_check_due", "wallet_zaincash_usd"), "");
-  // A wallet nobody has paid into has nothing to check.
-  assert.equal(alertsOf("wallet_check_due", "wallet_fastpay_iqd"), "");
-  syncAt(after(7, 2));
-  assert.equal(alertsOf("wallet_check_due", "wallet_zaincash_usd"), "open/true");
-  assert.equal(field("wallet_check_due", "wallet_zaincash_usd", "severity || '|' || title"), "low|ZainCash, dollars has not been checked against its app for 7 days");
-
-  app(`select gs_check_wallet(${lit(randomUUID())}, 'wallet_zaincash_usd', ${lit(USER)}, expected_in_app, now(), null) from wallet_status where code = 'wallet_zaincash_usd';`);
-  syncAt(after(40));
-  assert.equal(alertsOf("wallet_check_due", "wallet_zaincash_usd"), "cleared/false");
+test("there is no wallet check: the app cannot record one, and FIB money raises no alert however long it waits", () => {
+  const customer = newCustomer("FIB Payer");
+  charge(customer, 50000n, new Date("2026-12-01T05:00:00Z"));
+  post(walletPayment({ customerId: customer, received: iqd(145000n), ratePer100: 145000, wallet: "fib" }), DAY);
+  refused(
+    () => app(`select gs_check_wallet(${lit(randomUUID())}, 'wallet_fib_iqd', ${lit(USER)}, 0, ${lit(DAY.toISOString())}, 'x');`),
+    /permission denied/,
+  );
+  // A gap written before 22 October raises nothing either.
+  const gap = randomUUID();
+  owner(`insert into wallet_checks (id, account_id, currency, app_balance, expected, note, checked_at, checked_by) select ${lit(gap)}, id, 'IQD', 1, 2, 'old', now(), ${lit(USER)} from accounts where code = 'wallet_fib_iqd';`);
+  syncAt("now() + interval '90 days'");
+  assert.equal(alertsOf("wallet_check_due", "wallet_fib_iqd"), "");
+  assert.equal(alertsOf("wallet_gap", gap), "");
+  assert.equal(app("select count(*) from alerts where kind in ('wallet_gap', 'wallet_check_due') and active;"), "0");
   syncAt("now()");
 });
 

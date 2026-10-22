@@ -92,7 +92,7 @@ export const ENTRY: Record<EntryKind, string> = {
   driver_collected: "Driver collected",
   round_handed_in: "Round handed in",
   office_payment: "Paid at the office",
-  wallet_payment: "Paid by wallet",
+  wallet_payment: "Paid by FIB",
   sent_to_china: "Sent to China",
   cash_out: "Cash out",
   currency_exchange: "Currency exchange",
