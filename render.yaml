@@ -1,0 +1,21 @@
+# Render Blueprint: the whole system as one free web service.
+# The database is on Neon; DATABASE_URL is its owner connection string.
+services:
+  - type: web
+    name: green-star
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /sign-in
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_DB_PASSWORD
+        generateValue: true
+      - key: CEO_NAME
+        sync: false
+      - key: CEO_PHONE
+        sync: false
+      - key: CEO_PASSWORD
+        sync: false

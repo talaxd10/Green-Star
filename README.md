@@ -399,6 +399,17 @@ Statements are drawn with Chromium, and so is the end-to-end test. Install it on
 
 `pnpm --filter @green-star/api test test/auth.test.ts` runs one test file. The same works for `@green-star/db`.
 
+## Online
+
+The whole system runs as one free Render web service (`render.yaml`, `Dockerfile`) with the database on Neon. `infra/start.sh` is what runs:
+
+1. It brings the database up to date as the owner login (`DATABASE_URL`, Neon's connection string with pooling off: the scripts set `gs.actor` in the connection options, which a pooler drops).
+2. It makes the app's own login, `gs_app`, with the password Render generated (`APP_DB_PASSWORD`), and gives it the `green_star_app` rights. The running app signs in as `gs_app` and can never change the ledger.
+3. On an empty database it makes the CEO's account from `CEO_NAME`, `CEO_PHONE` and `CEO_PASSWORD`. After that they are not read again; a lost password is set with `create-ceo` from a machine that has `DATABASE_URL`.
+4. It runs the API and the worker on the same machine, next to the office app. Only the office app faces the internet; it passes `/v1` on to the API, and the API only answers the service's own address (`RENDER_EXTERNAL_URL`).
+
+On the free plan the service sleeps after 15 minutes with no visitors and takes about a minute to wake; the checks run again as it wakes. The image, Chromium included, peaked at under 300 MB of the 512 MB while drawing a statement. Every push to `main` deploys.
+
 ## Posting to the ledger
 
 The application never inserts lines by hand. Office money goes through two functions:
