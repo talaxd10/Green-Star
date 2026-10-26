@@ -208,7 +208,18 @@ await send("POST", "/v1/cash-outs", { category: "fuel_car", amount: { amount: 40
 await send("POST", "/v1/cash-outs", { category: "driver_pay", amount: { amount: 5_000, currency: "USD" }, reason: "Karwan, week of 27 September", happenedAt: ago(2, 17) });
 await send("POST", "/v1/cash-outs", { category: "china", amount: { amount: 10_000, currency: "USD" }, reason: "Sent with Kak Azad's transfer", happenedAt: ago(2, 12) });
 
-// -- Yesterday's vault close: counted, and $2 short with a note.
+// -- Starting balances, the way San types them in on his first day: the
+// cash in the vault, what is owed to China, a customer who owed from before
+// and one who had credit.
+await send("PUT", "/v1/starting-balances/office", { id: randomUUID(), what: "vault_usd", amount: 300_000 });
+await send("PUT", "/v1/starting-balances/office", { id: randomUUID(), what: "vault_iqd", amount: 2_000_000 });
+await send("PUT", "/v1/starting-balances/office", { id: randomUUID(), what: "china", amount: 450_000 });
+await send("PUT", `/v1/starting-balances/customers/${avin}`, { id: randomUUID(), usdCents: 18_000 });
+await send("PUT", `/v1/starting-balances/customers/${lana}`, { id: randomUUID(), usdCents: -2_000 });
+
+// -- The vault close: counted, and $2 short with a note. It is the last thing
+// entered, so what it is counted against is everything above, whatever the
+// time of day the demo is filled.
 const vault = await send("GET", "/v1/vault");
 const expected = (currency: string) => vault.currencies.find((c: { currency: string }) => c.currency === currency).expectedNow as number;
 const notesFor = (amount: number, values: number[]) => {
@@ -223,7 +234,7 @@ const notesFor = (amount: number, values: number[]) => {
 };
 await send("POST", "/v1/vault/close", {
   id: randomUUID(),
-  closedAt: ago(0, 8),
+  closedAt: new Date(Date.now() - 30_000).toISOString(),
   usdNotes: notesFor(Math.max(expected("USD") - 200, 0), [10000, 5000, 2000, 1000, 500, 200, 100]),
   iqdNotes: notesFor(expected("IQD"), [50000, 25000, 10000, 5000, 1000, 500, 250]),
   note: "$2 short. Counted twice. Will check yesterday's receipts.",
