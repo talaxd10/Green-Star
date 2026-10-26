@@ -5,6 +5,8 @@
 // never say different amounts.
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PaymentMethod, Statement, StatementLine } from "@green-star/contracts";
 import { format, money } from "@green-star/domain";
@@ -100,11 +102,30 @@ const FONTS: readonly { family: string; weight: string; stretch?: string; file: 
 
 let fontCss: string | null = null;
 
+/**
+ * Where a font file is. Run on its own the API asks Node; inside the office
+ * app (on Vercel) it is bundled and asks from the app's own folder, which has
+ * the same fonts.
+ */
+function fontPath(file: string): string {
+  try {
+    if (typeof import.meta.resolve === "function") return fileURLToPath(import.meta.resolve(file));
+  } catch {
+    // Not resolvable from here: try from the app's folder.
+  }
+  return createRequire(join(process.cwd(), "package.json")).resolve(file);
+}
+
 /** The fonts, inside the page itself, so drawing it never reaches out to the network. */
 function fonts(): string {
-  fontCss ??= FONTS.map((font) => {
-    const data = readFileSync(fileURLToPath(import.meta.resolve(font.file))).toString("base64");
-    return `@font-face{font-family:"${font.family}";font-weight:${font.weight};${font.stretch ? `font-stretch:${font.stretch};` : ""}font-style:normal;src:url(data:font/woff2;base64,${data}) format("woff2")}`;
+  fontCss ??= FONTS.flatMap((font) => {
+    let data: string;
+    try {
+      data = readFileSync(fontPath(font.file)).toString("base64");
+    } catch {
+      return [];   // a font that is not there: the page is drawn with the next one in the list
+    }
+    return [`@font-face{font-family:"${font.family}";font-weight:${font.weight};${font.stretch ? `font-stretch:${font.stretch};` : ""}font-style:normal;src:url(data:font/woff2;base64,${data}) format("woff2")}`];
   }).join("\n");
   return fontCss;
 }

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./embedded": "./src/embedded.ts"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch src/main.ts",
     "start": "node --env-file-if-exists=../../.env src/main.ts",

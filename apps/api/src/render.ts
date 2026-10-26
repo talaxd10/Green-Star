@@ -4,7 +4,7 @@
 // scripts are off and nothing is fetched, so a name someone typed can never
 // make the drawing do anything but show it.
 
-import { chromium, type Browser, type BrowserContext } from "playwright-core";
+import type { Browser, BrowserContext } from "playwright-core";
 import { ApiError } from "./errors.ts";
 
 /** The width the statement is laid out at, and so the image's width before it is doubled for sharpness. */
@@ -22,7 +22,10 @@ export class Renderer {
   /** The browser, started the first time something is drawn and kept for the next. */
   async #open(): Promise<Browser> {
     if (this.#browser === null) {
-      const starting = chromium.launch(this.#executablePath === undefined ? {} : { executablePath: this.#executablePath });
+      // Loaded only when something is drawn: where the host has no Chromium, everything else still runs.
+      const starting = import("playwright-core").then(({ chromium }) =>
+        chromium.launch(this.#executablePath === undefined ? {} : { executablePath: this.#executablePath }),
+      );
       this.#browser = starting;
       // A start that failed is tried again the next time, not remembered.
       starting.then(

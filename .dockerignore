@@ -7,3 +7,5 @@
 .env
 .env.*
 .git
+**/.next-e2e-embed
+**/.next-embed

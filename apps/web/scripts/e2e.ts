@@ -6,6 +6,9 @@
 // It makes its own database (green_star_e2e_test), builds the app, starts the
 // API and the app on spare ports, runs e2e/*.spec.ts in Chromium, and stops
 // everything. The first time on a machine: `npx playwright install chromium`.
+//
+// E2E_EMBED=1 runs it the way Vercel does: no API of its own, the API inside
+// the office app (src/app/v1), built into .next-e2e-embed.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
@@ -25,6 +28,7 @@ function onDatabase(url: string): string {
   return out.toString();
 }
 
+const EMBED = process.env.E2E_EMBED === "1";
 const ownerUrl = onDatabase(process.env.TEST_DATABASE_URL ?? requireEnv("DATABASE_URL"));
 const appUrl = onDatabase(process.env.TEST_APP_DATABASE_URL ?? requireEnv("APP_DATABASE_URL"));
 console.log(reset(ownerUrl, appUrl));
@@ -39,7 +43,8 @@ const env = {
   COOKIE_SECURE: "false",
   LOG: "0",
   API_URL: `http://127.0.0.1:${API_PORT}`,
-  NEXT_DIST_DIR: ".next-e2e",
+  NEXT_DIST_DIR: EMBED ? ".next-e2e-embed" : ".next-e2e",
+  ...(EMBED ? { EMBED_API: "1" } : {}),
   NEXT_TELEMETRY_DISABLED: "1",
   E2E_URL: WEB_URL,
 };
@@ -84,9 +89,9 @@ async function ready(url: string, what: string): Promise<void> {
 
 let status = 1;
 try {
-  start(["src/main.ts"], api);
+  if (!EMBED) start(["src/main.ts"], api);
   start([next, "start", "--port", String(WEB_PORT)], root);
-  await ready(`http://127.0.0.1:${API_PORT}/healthz`, "The API");
+  if (!EMBED) await ready(`http://127.0.0.1:${API_PORT}/healthz`, "The API");
   await ready(`${WEB_URL}/sign-in`, "The office app");
   const tests = spawnSync(process.execPath, [playwright, "test", ...process.argv.slice(2).filter((arg) => arg !== "--")], { cwd: root, env, stdio: "inherit" });
   status = tests.status ?? 1;

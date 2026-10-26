@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
@@ -12,14 +15,22 @@
     "e2e": "node --env-file-if-exists=../../.env scripts/e2e.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "^11.3.0",
     "@fontsource-variable/archivo": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/noto-sans-arabic": "^5.3.0",
+    "@green-star/api": "workspace:*",
     "@green-star/contracts": "workspace:*",
     "@green-star/domain": "workspace:*",
     "@tanstack/react-query": "^5.104.1",
+    "fastify": "^5.12.5",
     "next": "^16.3.8",
+    "pg": "^8.23.1",
+    "playwright-core": "1.56.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"
   },
   "devDependencies": {

@@ -412,7 +412,18 @@ Tala: "Remove FastPay and ZainCash", "remove wallet systems at all for now: it s
 - **Starting balances** (`0022`, `0023`, Settings, Type them in): the vault's dollars and dinars, what is owed to China, and each customer's debt or credit on the day the office starts. Each is one `opening_balance` entry against the Starting balances account. Typing one again takes the old one back and posts the new one; 0 clears it; only `gs_set_starting_balance` posts or takes one back.
 - **What a customer owed before is paid first.** It is a consignment on a file of its own, "Starting balances", that counts as older than every file from China. That file is never listed with the files, never on Today, and never goes on a round. A credit he had pays his next file, like a payment not used yet. Nothing about a starting balance touches the China account unless San types China's.
 
-## Online
+## Online on Vercel and Neon
+
+The office app and the API are one Vercel project, with the database on Neon. Vercel runs only short requests, so:
+
+- **The API runs inside the office app.** `apps/web/src/app/v1/[...path]/route.ts` hands each request to the same Fastify app the standalone API runs (`apps/api/src/embedded.ts`), with no network in between. The office app and the API are one site, so a request from the site itself is same-origin, and one from any other site is refused as always. Anywhere else (`pnpm dev`, the Windows demo, Render), `next.config.ts` sends `/v1` to the API that runs on its own, before this route is reached. `VERCEL=1` or `EMBED_API=1` switches between the two.
+- **The database is set up by the build.** `apps/api/scripts/setup-db.ts` runs before `next build` (`apps/web/vercel.json`): the migrations (with `pg`, no psql), the app login `gs_app` (its password worked out from the owner's unless `APP_DB_PASSWORD` is set), and on an empty database the CEO's account from `CEO_NAME`, `CEO_PHONE`, `CEO_PASSWORD`. Without `DATABASE_URL` it does nothing.
+- **There is no worker.** The clock checks run when the office is read, at most once a minute, and the deep check once a day from Vercel's daily timer (`/cron/checks`, which only Vercel's timer can start when `CRON_SECRET` is set).
+- **Statement images and PDFs need Chromium,** which a Vercel function does not have: there they answer that the image cannot be drawn, and the text is still there to send.
+
+Vercel project: Root Directory `apps/web`, region Frankfurt (`fra1`, set in `vercel.json`, next to Neon's Frankfurt). Environment variables: `DATABASE_URL` (Neon, pooling off), `CEO_NAME`, `CEO_PHONE`, `CEO_PASSWORD`. `E2E_EMBED=1 pnpm --filter @green-star/web e2e` runs the whole browser test this way.
+
+## Online on Render
 
 The whole system runs as one free Render web service (`render.yaml`, `Dockerfile`) with the database on Neon. `infra/start.sh` is what runs:
 
