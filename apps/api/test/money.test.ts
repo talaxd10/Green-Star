@@ -361,7 +361,7 @@ test("the vault is closed by counting it; a gap needs a note; a wrong count is t
   const usd = vault.currencies.find((c: { currency: string }) => c.currency === "USD");
   const iqd = vault.currencies.find((c: { currency: string }) => c.currency === "IQD");
   assert.deepEqual(vault.currencies.map((c: { currency: string }) => c.currency), ["USD", "IQD"]);
-  assert.deepEqual(vault.denominations.filter((d: { currency: string }) => d.currency === "USD").map((d: { value: number }) => d.value), [10000, 5000, 2000, 1000, 500, 200, 100]);
+  assert.deepEqual(vault.denominations.filter((d: { currency: string }) => d.currency === "USD").map((d: { value: number }) => d.value), [10000, 5000, 2000, 1000, 500, 200, 100, 1]);
   assert.equal(usd.expectedNow, usd.ledgerBalance + usd.notedGap);
 
   // He counts $300 less than should be there, in hundreds.

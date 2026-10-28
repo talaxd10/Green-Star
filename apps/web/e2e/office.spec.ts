@@ -158,13 +158,11 @@ test("a round is made, goes out, and its results are entered from the receipts",
   await expect(page.getByText("→ $85.00 at 1,450")).toBeVisible();
 });
 
-test("the driver's cash is counted note by note and goes into the vault", async () => {
-  await page.locator("#IQD-25000").fill("4");
-  await page.locator("#IQD-10000").fill("2");
-  await page.locator("#IQD-1000").fill("3");
+test("the driver's cash is counted, one amount per currency, and goes into the vault", async () => {
+  await page.getByLabel("Counted, in dinars").fill("123,000");
   await expect(page.getByText("Short by")).toBeVisible();
   await expect(page.getByLabel("Why the cash and the receipts differ")).toBeVisible();
-  await page.locator("#IQD-250").fill("1");
+  await page.getByLabel("Counted, in dinars").fill("123,250");
   await expect(page.getByText("Matches")).toHaveCount(2);
 
   await page.getByRole("button", { name: "Count it into the vault" }).click();
@@ -210,15 +208,12 @@ test("the vault is closed by counting it, and matches what was entered", async (
   await expect(page.getByText("should be $100.00")).toBeVisible();
   await expect(page.getByText("should be 123,250 IQD")).toBeVisible();
 
-  await page.locator("#USD-5000").fill("1");
-  await page.locator("#IQD-25000").fill("4");
-  await page.locator("#IQD-10000").fill("2");
-  await page.locator("#IQD-1000").fill("3");
-  await page.locator("#IQD-250").fill("1");
+  await page.getByLabel("Counted, in dollars").fill("50");
+  await page.getByLabel("Counted, in dinars").fill("123250");
 
   // $50 short: it cannot be closed without saying why.
   await expect(page.getByRole("button", { name: "Close the vault" })).toBeDisabled();
-  await page.locator("#USD-5000").fill("2");
+  await page.getByLabel("Counted, in dollars").fill("100");
   await expect(page.getByText("Matches")).toHaveCount(2);
   await page.getByRole("button", { name: "Close the vault" }).click();
   await expect(page.getByText("The vault is closed for today")).toBeVisible();
@@ -517,12 +512,8 @@ test("at the door a customer pays the driver in dollars and dinars, and the driv
   await expect(page.getByText("The driver forgot to collect.")).toHaveCount(0);
 
   // He hands in the dollars and the dinars, and the round is done.
-  await page.locator("#USD-10000").fill("4");
-  await page.locator("#IQD-50000").fill("3");
-  await page.locator("#IQD-25000").fill("1");
-  await page.locator("#IQD-10000").fill("1");
-  await page.locator("#IQD-5000").fill("1");
-  await page.locator("#IQD-1000").fill("3");
+  await page.getByLabel("Counted, in dollars").fill("400");
+  await page.getByLabel("Counted, in dinars").fill("193,000");
   await expect(page.getByText("Matches")).toHaveCount(2);
   await page.getByRole("button", { name: "Count it into the vault" }).click();
   await expect(page.getByText("All the cash on the receipts is counted in.")).toBeVisible();

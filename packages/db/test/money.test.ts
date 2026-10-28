@@ -417,3 +417,17 @@ test("random days at the office: expected cash is always the last count plus wha
   assert.ok(closes >= 5 && gaps >= 2, `expected several closes with gaps, got ${closes} closes and ${gaps} gaps`);
   assert.equal(health(), "");
 });
+
+test("the vault can be counted as one amount per currency", () => {
+  emptyVault(new Date("2026-12-20T12:00:00Z"));
+  fundVault(15050n, 123250n);
+  const last = (currency: "USD" | "IQD") => app(`select last_difference from vault_status where currency = ${lit(currency)};`);
+  // $150.49 counted in total against $150.50: he has to say why.
+  const later = new Date("2026-12-20T13:00:00Z");
+  refused(() => closeVault({ usd: { 1: 15049 }, iqd: { 1: 123250 }, at: later }), /gap_note_required/);
+  closeVault({ usd: { 1: 15050 }, iqd: { 1: 123250 }, at: later });
+  assert.equal(last("USD"), "0");
+  assert.equal(last("IQD"), "0");
+  // Notes still count, and a typo is still refused.
+  refused(() => closeVault({ usd: { 3: 1 }, at: new Date("2026-12-20T14:00:00Z") }), /note_unknown/);
+});

@@ -226,8 +226,8 @@ function HandIn({ round }: { round: RoundDetail }) {
       }}
     >
       <div className="grid grid-cols-1 divide-y divide-rule md:grid-cols-2 md:divide-x md:divide-y-0">
-        <NoteCounter currency="USD" denominations={vault.data.denominations} notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
-        <NoteCounter currency="IQD" denominations={vault.data.denominations} notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
+        <NoteCounter currency="USD" notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
+        <NoteCounter currency="IQD" notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
       </div>
       <div className="flex flex-col gap-3 border-t border-rule p-5">
         {gap ? (
@@ -644,7 +644,7 @@ export default function RoundPage() {
               hint={
                 r.status === "handed_in" && cash("USD").gap === 0 && cash("IQD").gap === 0
                   ? "All the cash on the receipts is counted in."
-                  : "Note by note, per currency. It is checked against the receipts entered above."
+                  : "The dollars and the dinars he hands in. They are checked against the receipts entered above."
               }
             />
             <HandIn round={r} />

@@ -60,7 +60,7 @@ export default function VaultPage() {
 
   return (
     <>
-      <PageHead title="Vault close" hint="Count the vault note by note at the end of the day. The system adds it up and compares it with the last count plus everything entered since." />
+      <PageHead title="Vault close" hint="Count the vault at the end of the day: the dollars and the dinars. The system compares them with the last count plus everything entered since." />
 
       <Card className="mb-5 grid grid-cols-2 gap-6 p-5 md:grid-cols-4">
         <Stat label="Should hold, dollars">{formatMoney(expected("USD"), "USD")}</Stat>
@@ -85,8 +85,8 @@ export default function VaultPage() {
             }}
           >
             <div className="grid grid-cols-1 divide-y divide-rule md:grid-cols-2 md:divide-x md:divide-y-0">
-              <NoteCounter currency="USD" denominations={v.denominations} notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
-              <NoteCounter currency="IQD" denominations={v.denominations} notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
+              <NoteCounter currency="USD" notes={usdNotes} onChange={setUsdNotes} expected={expected("USD")} />
+              <NoteCounter currency="IQD" notes={iqdNotes} onChange={setIqdNotes} expected={expected("IQD")} />
             </div>
             <div className="flex flex-col gap-3 border-t border-rule p-5">
               {gap ? (

@@ -518,6 +518,25 @@ test("round money is posted by the round and by nothing else", () => {
   refused(() => app(`select gs_void_result_inner(${lit(result)}, ${lit(USER)}, 'x');`), /permission denied/);
 });
 
+test("a hand-in can be counted as one amount per currency", () => {
+  const a = newCustomer("Total A");
+  const b = newCustomer("Total B");
+  const { consignmentIds } = file([[a, 20000n], [b, 5000n]]);
+  const [cA, cB] = consignmentIds as [string, string];
+  const round = roundOut(consignmentIds);
+  enterResult({ roundId: round, consignmentId: cA, outcome: "paid", received: { amount: 20000, currency: "USD" }, at: DAY });
+  enterResult({ roundId: round, consignmentId: cB, outcome: "paid", received: { amount: 72500, currency: "IQD" }, at: DAY });
+  refused(() => handIn(round, { usd: { 1: 19900 }, iqd: { 1: 72500 } }), /gap_note_required/);
+  refused(() => handIn(round, { usd: { 2: 10000 } }), /note_unknown/);
+  handIn(round, { usd: { 1: 20000 }, iqd: { 1: 72500 } });
+  assert.equal(
+    app(`select string_agg(c.currency || ':' || c.counted || ':' || c.difference, ' ' order by c.currency)
+         from cash_counts c join round_hand_ins h on h.id = c.round_hand_in_id where h.round_id = ${lit(round)};`),
+    "USD:20000:0 IQD:72500:0",
+  );
+  assert.equal(health(), "");
+});
+
 test("a hand-in counted wrong is taken back whole", () => {
   const customer = newCustomer();
   const { consignmentIds, shipmentId } = file([[customer, 10000n]]);
