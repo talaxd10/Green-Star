@@ -11,7 +11,7 @@ import type { FastifyInstance, InjectOptions } from "fastify";
 import { buildApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { Db } from "./db.ts";
-import { appDatabaseUrl, appPassword } from "./hosting.ts";
+import { appDatabaseUrl, appPassword, ownerUrl } from "./hosting.ts";
 
 const CHECK_EVERY_MS = 60_000;
 
@@ -21,8 +21,8 @@ let lastChecks = 0;
 /** The environment, with the app login worked out from the owner's when it is not set. */
 function environment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  if ((env.APP_DATABASE_URL ?? "") === "" && (env.DATABASE_URL ?? "") !== "") {
-    const owner = env.DATABASE_URL as string;
+  const owner = ownerUrl(env);
+  if ((env.APP_DATABASE_URL ?? "") === "" && owner !== undefined) {
     env.APP_DATABASE_URL = appDatabaseUrl(owner, appPassword(owner, env.APP_DB_PASSWORD));
   }
   return env;

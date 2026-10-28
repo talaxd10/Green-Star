@@ -4,6 +4,21 @@
 
 import { createHash } from "node:crypto";
 
+/**
+ * The owner's connection, straight to the database. Neon's Vercel
+ * integration sets DATABASE_URL to its pooler and the direct one as
+ * DATABASE_URL_UNPOOLED (or POSTGRES_URL_NON_POOLING); the direct one is
+ * used when it is there, because the setup takes a lock that a pooler
+ * would not hold.
+ */
+export function ownerUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  for (const name of ["DATABASE_URL_UNPOOLED", "POSTGRES_URL_NON_POOLING", "DATABASE_URL"]) {
+    const value = env[name];
+    if (value !== undefined && value !== "") return value;
+  }
+  return undefined;
+}
+
 /** The app login's password: APP_DB_PASSWORD when it is set, otherwise one worked out from the owner's password. */
 export function appPassword(ownerUrl: string, explicit?: string | undefined): string {
   if (explicit !== undefined && explicit !== "") return explicit;

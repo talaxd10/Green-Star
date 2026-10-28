@@ -4,7 +4,8 @@
 //   node apps/api/scripts/setup-db.ts
 //
 // 1. Applies every migration not applied yet, each in its own transaction,
-//    as the owner login (DATABASE_URL; on Neon, the string with pooling off).
+//    as the owner login (DATABASE_URL, or the direct DATABASE_URL_UNPOOLED
+//    that Neon's Vercel integration sets next to it).
 // 2. Makes sure the app's own login, gs_app, exists with the right password
 //    and the green_star_app rights. The running app signs in as gs_app and
 //    can never change the ledger.
@@ -18,10 +19,10 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
-import { appPassword } from "../src/hosting.ts";
+import { appPassword, ownerUrl } from "../src/hosting.ts";
 
-const owner = process.env.DATABASE_URL;
-if (owner === undefined || owner === "") {
+const owner = ownerUrl();
+if (owner === undefined) {
   console.log("No DATABASE_URL: the database was not set up.");
   process.exit(0);
 }
@@ -76,7 +77,7 @@ try {
     } else {
       const made = spawnSync(process.execPath, [...process.execArgv, "scripts/create-ceo.ts", "--name", process.env.CEO_NAME || "CEO", "--phone", phone], {
         cwd: join(import.meta.dirname, ".."),
-        env: { ...process.env, GS_PASSWORD: secret },
+        env: { ...process.env, DATABASE_URL: owner, GS_PASSWORD: secret },
         stdio: "inherit",
       });
       if (made.status !== 0) throw new Error("The CEO's account could not be made.");
